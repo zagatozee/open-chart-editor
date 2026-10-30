@@ -1,0 +1,4 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {makeArrangement,setStringOffset} from '../src/model.js';
+test('a whole-number offset tunes one string, beyond two octaves too',()=>{const a=makeArrangement('guitar');setStringOffset(a,0,'-2');setStringOffset(a,5,' -26 ');assert.deepEqual(a.tuning,[-2,0,0,0,0,-26]);});
+test('blank, fractional and unknown-string edits are refused and leave tuning unchanged',()=>{const a=makeArrangement('guitar');for(const [s,t] of [[1,''],[1,'0.5'],[1,'abc'],[6,'1'],[-1,'1']])assert.throws(()=>setStringOffset(a,s,t));assert.deepEqual(a.tuning,[0,0,0,0,0,0]);});
+test('a short tuning array is padded with zeros, never left with holes',()=>{const a=makeArrangement('guitar');a.tuning=[1,2];setStringOffset(a,4,'3');assert.deepEqual(a.tuning,[1,2,0,0,3]);});

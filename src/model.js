@@ -163,6 +163,13 @@ export function setStringCount(a,count){
   for(const n of notes)n.string=mapping[n.string];for(const {template,updates}of templates)Object.assign(template,updates);
   a.tuning=offsets;a.basePitches=bases;a.stringCount=count;
 }
+// One string's tuning offset from the inspector: any whole number of semitones (the pack rule).
+export function setStringOffset(a,string,text){
+  const value=Number(text);
+  if(!Number.isInteger(string)||string<0||string>=a.stringCount)throw Error('That string is not part of this arrangement');
+  if(String(text).trim()===''||!Number.isInteger(value))throw Error('A string offset must be a whole number of semitones');
+  const tuning=a.tuning||(a.tuning=[]);while(tuning.length<string)tuning.push(0);tuning[string]=value;
+}
 function selectedChordShape(a,notes){
   if(notes.length<2)throw Error('Select at least two notes');
   if(notes.some(n=>Math.abs(n.time-notes[0].time)>0.001))throw Error('Chord notes must start together');
