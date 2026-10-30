@@ -123,7 +123,7 @@ function mount(root){
  let staveTheme='dark',showRests=true,staveMode='select',staveLength=1,staveHits=[],staveMetricsCache=null,staveKeyCache=null;
 let history=new History(demoProject()),arrangementId=history.project.arrangements[0].id,view='tab',inspector='settings',bottom='errors',selection=new Set(),cursor=0,lane=0,lastFret=3,zoom=110,snap=4,tool='pointer',clipboard=[],drag=null,dirty=false,saveHandle=null,lastSaveFormat='json',exportOptions={},lastDestination='',tapTimes=[],waveform=null,loadedAudio=null,draftTimer=null;
  let toneImportGeneration=0,tempoImportGeneration=0,chartImportGeneration=0;
- let spectrumAnalysis=null,spectrumWorker=null,spectrumGeneration=0,spectrumRenderAt=0,spectrumVisibleCharts=new Map(),spectrumZoom=12,spectrumSemitoneHeight=6,spectrumStatus='Import backing audio, then analyze its pitched energy.';
+ let spectrumAnalysis=null,spectrumWorker=null,spectrumGeneration=0,spectrumRenderAt=0,spectrumVisibleCharts=new Map(),spectrumZoom=12,spectrumSemitoneHeight=4,spectrumStatus='Import backing audio, then analyze its pitched energy.';
  let midiAppendScope=null,midiRenderFrame=null,midiRenderOwner=null;
  let midiUiPending=false,midiSetupPromise=null,recordStartGeneration=0,recordStartPending=false,transportStartGeneration=0,localStartPending=false;
  let click=false,guide=true,loop=false,ramp={enabled:false,startSpeed:0.75,endSpeed:1,duration:30},onsets=[],gridSuggestion=null,selectedTone=null,tonePreview=null,previewToneName=null,previewToneDefinition=null,previewToneArrangement=null,auditionSelectedTone=true,selectionRange=null,midiConnection=null,midiRecorder=null,midiRecording=false,midiAuditioning=false,midiConnectionGeneration=0,markerSelection=null,pianoLow=21,pianoHigh=108,invertStrings=false,preview=null;
@@ -1613,26 +1613,28 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   const left=scroll.scrollLeft,visibleLeft=Math.max(0,(left-SPECTRUM_AXIS)/scale),visibleRight=Math.min(duration,(left+scroll.clientWidth-SPECTRUM_AXIS)/scale),firstPitch=SPECTRUM_MIN_MIDI,lastPitch=SPECTRUM_MAX_MIDI;
   const chart=arrangement(),items=spectrumChartNotes(chart);
   context.fillStyle='#f3f2ef';context.fillRect(SPECTRUM_AXIS,SPECTRUM_SCORE_TOP,width-SPECTRUM_AXIS,SPECTRUM_SCORE_HEIGHT);
-  context.fillStyle='#222a31';context.font='10px Segoe UI';context.textBaseline='top';context.fillText(`${chart.name} · TAB / SCORE`,SPECTRUM_AXIS+6,SPECTRUM_SCORE_TOP+4);
+  context.fillStyle='#222a31';context.font='10px Segoe UI';context.textBaseline='top';context.fillText(`${chart.name} · STAFF / TAB`,SPECTRUM_AXIS+6,SPECTRUM_SCORE_TOP+4);
   const chartType=chart.type;
   if(chartType==='guitar'||chartType==='bass'){
-   const strings=Math.max(1,chart.stringCount||chart.basePitches?.length||6),rowHeight=Math.min(18,(SPECTRUM_SCORE_HEIGHT-30)/strings),firstY=SPECTRUM_SCORE_TOP+24;
-   context.font='10px Segoe UI';context.textBaseline='middle';
-   for(let string=0;string<strings;string++){
-    const y=firstY+(string+.5)*rowHeight,pitch=(chart.basePitches?.[string]||0)+(chart.tuning?.[string]||0)+(chart.capo||0);
-    context.strokeStyle='#91969a';context.lineWidth=.8;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();
-    context.fillStyle='#555d64';context.fillText(noteName(pitch),4,y);
-   }
-   if(chart.readOnly)context.fillStyle='#52585d',context.fillText('Source notation is retained but has no editable note events',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT/2);
-   for(const {note}of items){
+   const strings=Math.max(1,chart.stringCount||chart.basePitches?.length||6),staffTop=SPECTRUM_SCORE_TOP+25,staffSpacing=5.5,staffBottom=staffTop+staffSpacing*4,tabTop=SPECTRUM_SCORE_TOP+78,tabSpacing=(SPECTRUM_SCORE_HEIGHT-87)/Math.max(1,strings-1),pitchClasses=[0,0,1,1,2,3,3,4,4,5,5,6],staffPitches=items.map(({pitch})=>pitch+12).sort((a,b)=>a-b),middlePitch=staffPitches.length?staffPitches[Math.floor(staffPitches.length/2)]:64,middleStep=(Math.floor(middlePitch/12)-1)*7+pitchClasses[middlePitch%12],staffBase=middleStep-4;
+   context.font='9px Segoe UI';context.textBaseline='middle';context.fillStyle='#555d64';context.fillText('STAFF',4,staffTop+staffSpacing*2);context.fillText('TAB',4,tabTop+tabSpacing*(strings-1)/2);
+   context.strokeStyle='#91969a';context.lineWidth=.8;
+   for(let line=0;line<5;line++){const y=staffTop+line*staffSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
+   for(let string=0;string<strings;string++){const y=tabTop+(strings-1-string)*tabSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
+   context.font='bold 10px Segoe UI';context.textAlign='center';
+   for(const {note,pitch}of items){
     const string=Number.isInteger(note.string)?note.string:-1;if(string<0||string>=strings)continue;
-    const rowHeightForNote=Math.min(18,(SPECTRUM_SCORE_HEIGHT-30)/strings),y=SPECTRUM_SCORE_TOP+24+(string+.5)*rowHeightForNote,x=SPECTRUM_AXIS+note.time*scale;
-    if(x<SPECTRUM_AXIS+visibleLeft*scale-12||x>SPECTRUM_AXIS+visibleRight*scale+12)continue;
-    const sustain=Math.max(0,note.sustain||0),end=x+sustain*scale;
-    if(sustain>0){context.strokeStyle='#65717a';context.lineWidth=1;context.beginPath();context.moveTo(x,y);context.lineTo(Math.max(x+8,end),y);context.stroke();}
-    context.fillStyle='#f3f2ef';context.strokeStyle='#30373b';context.lineWidth=1;context.beginPath();context.roundRect(x-7,y-7,14,14,3);context.fill();context.stroke();
-    context.fillStyle='#20262a';context.font='bold 10px Segoe UI';context.textAlign='center';context.textBaseline='middle';context.fillText(String(shownFret(note.fret)),x,y+.5);context.textAlign='left';
+    const x=SPECTRUM_AXIS+note.time*scale;if(x<SPECTRUM_AXIS+visibleLeft*scale-18||x>SPECTRUM_AXIS+visibleRight*scale+18)continue;
+    const y=tabTop+(strings-1-string)*tabSpacing,staffPitch=pitch+12,staffStep=(Math.floor(staffPitch/12)-1)*7+pitchClasses[staffPitch%12]-staffBase,noteY=staffBottom-staffStep*staffSpacing/2;
+    if((staffStep<0&&staffStep%2===0)||(staffStep>8&&(staffStep-8)%2===0)){const ledgerY=staffBottom-Math.floor(staffStep/2)*staffSpacing;context.beginPath();context.moveTo(x-7,ledgerY);context.lineTo(x+7,ledgerY);context.stroke();}
+    context.fillStyle='#20262a';context.font='10px Segoe UI';if(![0,2,4,5,7,9,11].includes(staffPitch%12))context.fillText('♯',x-11,noteY);
+    context.fillStyle='#20262a';context.beginPath();context.ellipse(x,noteY,5.5,3.8,-Math.PI/6,0,Math.PI*2);context.fill();
+    context.strokeStyle='#20262a';context.lineWidth=1;context.beginPath();context.moveTo(x+4,noteY);context.lineTo(x+4,noteY-17);context.stroke();
+    const sustain=Math.max(0,note.sustain||0),end=x+sustain*scale;if(sustain>0){context.strokeStyle='#65717a';context.lineWidth=1;context.beginPath();context.moveTo(x,y);context.lineTo(Math.max(x+7,end),y);context.stroke();}
+    context.fillStyle='#20262a';context.font='bold 10px Segoe UI';context.fillText(String(shownFret(note.fret)),x,y);
    }
+   context.textAlign='left';
+   if(chart.readOnly){context.fillStyle='#52585d';context.font='10px Segoe UI';context.fillText('Source notation retained · note events unavailable',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT-7);}
   }else if(chartType==='keys'){
    const pitches=items.map(({pitch})=>pitch),low=pitches.length?Math.max(SPECTRUM_MIN_MIDI,Math.min(...pitches)-2):48,high=pitches.length?Math.min(SPECTRUM_MAX_MIDI,Math.max(...pitches)+2):72,step=(SPECTRUM_SCORE_HEIGHT-30)/Math.max(1,high-low+1),top=SPECTRUM_SCORE_TOP+24;
    for(let pitch=low;pitch<=high;pitch++){const y=top+(high-pitch)*step;context.fillStyle=pitch%12===0?'#d8d8d5':'#f3f2ef';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,step);context.strokeStyle='#c2c3c0';context.beginPath();context.moveTo(SPECTRUM_AXIS,y+step);context.lineTo(width,y+step);context.stroke();if(pitch%12===0){context.fillStyle='#555d64';context.font='9px Segoe UI';context.fillText(noteName(pitch),4,y+step/2);}}
@@ -1688,7 +1690,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   const previous=$('spectrum-scroll'),scrollLeft=previous?.scrollLeft||0,scrollTop=previous?.scrollTop||0,arrangements=project().arrangements;
   for(const a of arrangements)if(a.type!=='drums'&&!spectrumVisibleCharts.has(a.id))spectrumVisibleCharts.set(a.id,true);
   const controls=arrangements.map((a,index)=>a.type==='drums'?`<label title="Drum charts do not contain pitched note positions"><input type="checkbox" disabled>Drums · ${esc(a.name)} (no pitches)</label>`:`<label><input type="checkbox" data-spectrum-chart="${esc(a.id)}" ${spectrumVisibleCharts.get(a.id)!==false?'checked':''}><span class="ws-spectrum-track-color" style="background:${spectrumColor(index)}"></span>${esc(a.name)}</label>`).join('');
-  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Time zoom <input type="range" min="3" max="48" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="4" max="14" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays"></canvas></div>`;
+  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Time zoom <input type="range" min="3" max="48" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="3" max="10" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays"></canvas></div>`;
   const next=$('spectrum-scroll');next.scrollLeft=scrollLeft;next.scrollTop=scrollTop;drawSpectrum();
  }
  async function analyzeSpectrumAudio(){
