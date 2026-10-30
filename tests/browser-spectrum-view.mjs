@@ -1,0 +1,30 @@
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+import {makeProject,makeArrangement,makeNote} from '../src/model.js';
+
+const require=createRequire(import.meta.url),{chromium}=require(process.env.OCE_PLAYWRIGHT||'C:/Users/zagat/AppData/Roaming/npm/node_modules/rea-agents/node_modules/playwright-core');
+const browser=await chromium.launch({headless:true,args:['--mute-audio'],executablePath:process.env.OCE_CHROMIUM||'C:/Users/zagat/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell.exe'}),page=await browser.newPage({viewport:{width:1600,height:1000}}),errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{const source=message.location().url,text=message.text();if(message.type()==='error'&&!(source.endsWith('/favicon.ico')&&text.includes('404')))errors.push(`${source}: ${text}`);});page.on('response',response=>{if(response.status()>=400)errors.push(`HTTP ${response.status()} ${response.url()}`);});let report;
+
+function wav(samples,sampleRate){
+ const buffer=Buffer.alloc(44+samples.length*4);buffer.write('RIFF',0);buffer.writeUInt32LE(buffer.length-8,4);buffer.write('WAVE',8);buffer.write('fmt ',12);buffer.writeUInt32LE(16,16);buffer.writeUInt16LE(1,20);buffer.writeUInt16LE(2,22);buffer.writeUInt32LE(sampleRate,24);buffer.writeUInt32LE(sampleRate*4,28);buffer.writeUInt16LE(4,32);buffer.writeUInt16LE(16,34);buffer.write('data',36);buffer.writeUInt32LE(samples.length*4,40);
+ for(let i=0;i<samples.length;i++){const value=Math.max(-1,Math.min(1,samples[i]));buffer.writeInt16LE(Math.round(value*(value<0?32768:32767)),44+i*4);buffer.writeInt16LE(Math.round(value*(value<0?32768:32767)),46+i*4);}
+ return buffer;
+}
+
+try{
+ await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
+ const project=makeProject();project.title='Spectrum overlay browser test';project.duration=2;project.beats=project.beats.filter(beat=>beat.time<=2);project.arrangements[0].notes=[makeNote(project.arrangements[0],.25,0,0,.4)];
+ const piano=makeArrangement('keys',null,{instrument:'piano'});piano.name='Piano';piano.notes=[makeNote(piano,.25,69,0,.4)];project.arrangements.push(piano);
+ await page.locator('#ws-open-file').setInputFiles({name:'spectrum-test.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(project))});if(await page.locator('#ws-dialog[open]').count())await page.locator('#ws-dialog-submit').click();await page.waitForFunction(title=>document.querySelector('#ws-title').textContent.includes(title),project.title);
+ const rate=48000,samples=Float32Array.from({length:rate*2},(_,i)=>.3*Math.sin(2*Math.PI*82.4069*i/rate)+.3*Math.sin(2*Math.PI*440*i/rate));
+ await page.locator('#ws-audio-file').setInputFiles({name:'spectrum-test.wav',mimeType:'audio/wav',buffer:wav(samples,rate)});await page.waitForFunction(()=>document.querySelector('#ws-status').textContent.includes('Audio ready'),null,{timeout:30000});
+ await page.locator('#ws-spectrum-button').click();assert.equal(await page.locator('#ws-spectrum-view').isVisible(),true);assert.equal(await page.locator('[data-spectrum-chart]').count(),2);assert.equal(await page.locator('[data-spectrum-chart]:checked').count(),2);assert.match(await page.locator('.ws-spectrum-tracks').textContent(),/Show chart notes/);
+ await page.locator('[data-action="spectrum-analyze"]').click();await page.waitForFunction(()=>document.querySelector('#ws-spectrum-status').textContent.includes('Analyzed'),null,{timeout:30000});
+ const canvas=page.locator('#ws-spectrum-canvas'),readPixel=async(pitch)=>canvas.evaluate((element,p)=>{const context=element.getContext('2d'),scale=element.width/element.clientWidth,x=Math.round((52+.25*12)*scale),y=Math.round((104+(108-p)*9+3)*scale);return Array.from(context.getImageData(x,y,1,1).data);},pitch),waveformPixel=await canvas.evaluate(element=>{const scale=element.width/element.clientWidth;return Array.from(element.getContext('2d').getImageData(Math.round(56*scale),Math.round(52*scale),1,1).data);});
+ assert.ok(waveformPixel[1]>waveformPixel[0]&&waveformPixel[2]>waveformPixel[0],`The aligned audio waveform should render above the pitch map, got ${waveformPixel}`);
+ const guitarWithOverlay=await readPixel(40),pianoWithOverlay=await readPixel(69),pianoToggle=page.locator('[data-spectrum-chart]').nth(1);await pianoToggle.uncheck();const pianoWithoutOverlay=await readPixel(69);
+ assert.notDeepEqual(pianoWithOverlay,pianoWithoutOverlay,'Disabling a chart should remove only its note overlay');assert.equal(await page.locator('[data-spectrum-chart]:checked').count(),1);
+ await page.locator('[data-spectrum-chart]').first().uncheck();const guitarWithoutOverlay=await readPixel(40);assert.notDeepEqual(guitarWithOverlay,guitarWithoutOverlay,'Each chart overlay should be independently toggleable');assert.equal(await page.locator('[data-spectrum-chart]:checked').count(),0);
+ await page.locator('[data-spectrum-zoom]').evaluate(element=>{element.value='24';element.dispatchEvent(new Event('input',{bubbles:true}));});assert.equal(await page.locator('[data-spectrum-zoom-value]').textContent(),'24 px/s');
+ assert.deepEqual(errors,[]);report={ok:true,checks:['Displayed an audio waveform above the pitch map on a shared timeline','Analyzed synthesized audio in the app worker','Independently hid both chart overlays while retaining the spectrum','Updated spectrum zoom and rendered without browser errors'],waveformPixel,guitarWithOverlay,guitarWithoutOverlay,pianoWithOverlay,pianoWithoutOverlay,errors};
+}catch(error){report={ok:false,error:error.stack,status:await page.locator('#ws-spectrum-status').textContent().catch(()=>null),appStatus:await page.locator('#ws-status').textContent().catch(()=>null),errors};process.exitCode=1;}finally{console.log(JSON.stringify(report,null,2));await browser.close();}
