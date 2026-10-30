@@ -1600,7 +1600,15 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  const SPECTRUM_PITCH_NAMES=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
  const hslToHex=(h,s,l)=>{s/=100;l/=100;const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l),f=n=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1))),toHex=x=>Math.round(255*x).toString(16).padStart(2,'0');return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;};
  const SPECTRUM_COLOR_PALETTE=Array.from({length:32},(_,i)=>hslToHex(Math.round(i*360/32),70,62));
- let spectrumColorOverrides={},spectrumBaseColor=null;
+ let spectrumColorOverrides={},spectrumBaseColor=null,spectrumBassHarmonics=true,spectrumShowStaff=true,spectrumShowTab=true,spectrumSuppressOctaveEcho=false;
+ function spectrumScoreHeight(){
+  const applies=['guitar','bass'].includes(arrangement().type);
+  if(!applies||(spectrumShowStaff&&spectrumShowTab))return SPECTRUM_SCORE_HEIGHT;
+  if(!spectrumShowStaff&&!spectrumShowTab)return 30;
+  return 70;
+ }
+ function spectrumWaveTop(){return SPECTRUM_SCORE_TOP+spectrumScoreHeight()+14;}
+ function spectrumPitchTop(){return spectrumWaveTop()+SPECTRUM_WAVE_HEIGHT+16;}
  const SPECTRUM_BASE_COLOR_DEFAULT='#9aa3ad';
  const hexToRgb=hex=>{const n=parseInt(hex.slice(1),16);return [(n>>16)&255,(n>>8)&255,n&255];};
  function spectrumChartNotes(a){
@@ -1645,61 +1653,67 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  }
  function drawSpectrum(){
   const canvas=$('spectrum-canvas'),scroll=$('spectrum-scroll');if(!canvas||!scroll||view!=='spectrum')return;
-  const duration=Math.max(.1,project().duration),scale=spectrumZoom,contentWidth=SPECTRUM_AXIS+duration*scale,width=Math.max(200,scroll.clientWidth||0),rowHeight=spectrumSemitoneHeight,height=SPECTRUM_TOP+(SPECTRUM_MAX_MIDI-SPECTRUM_MIN_MIDI+1)*rowHeight+8;
+  const duration=Math.max(.1,project().duration),scale=spectrumZoom,contentWidth=SPECTRUM_AXIS+duration*scale,width=Math.max(200,scroll.clientWidth||0),rowHeight=spectrumSemitoneHeight,scoreHeight=spectrumScoreHeight(),waveTop=spectrumWaveTop(),pitchTop=spectrumPitchTop(),height=pitchTop+(SPECTRUM_MAX_MIDI-SPECTRUM_MIN_MIDI+1)*rowHeight+8;
   const spacerEl=scroll.querySelector('[data-spectrum-spacer]');if(spacerEl)spacerEl.style.width=`${contentWidth}px`;
   canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;
   const dpr=Math.min(window.devicePixelRatio||1,2,Math.sqrt(10000000/Math.max(1,width*height))),pixelWidth=Math.max(1,Math.floor(width*dpr)),pixelHeight=Math.max(1,Math.floor(height*dpr));
   if(canvas.width!==pixelWidth||canvas.height!==pixelHeight){canvas.width=pixelWidth;canvas.height=pixelHeight;}
   const context=canvas.getContext('2d');context.setTransform(dpr,0,0,dpr,0,0);context.fillStyle='#0a0e14';context.fillRect(0,0,width,height);
   const left=scroll.scrollLeft,visibleLeft=Math.max(0,left/scale),visibleRight=Math.min(duration,(left+width-SPECTRUM_AXIS)/scale),firstPitch=SPECTRUM_MIN_MIDI,lastPitch=SPECTRUM_MAX_MIDI,vx=t=>SPECTRUM_AXIS+t*scale-left;
-  const chart=arrangement(),items=spectrumChartNotes(chart);
-  context.fillStyle='#f3f2ef';context.fillRect(SPECTRUM_AXIS,SPECTRUM_SCORE_TOP,width-SPECTRUM_AXIS,SPECTRUM_SCORE_HEIGHT);
-  context.fillStyle='#222a31';context.font='10px Segoe UI';context.textBaseline='top';context.fillText(`${chart.name} · STAFF / TAB`,SPECTRUM_AXIS+6,SPECTRUM_SCORE_TOP+4);
+  const chart=arrangement(),items=spectrumChartNotes(chart),showStaff=spectrumShowStaff,showTab=spectrumShowTab;
+  context.fillStyle='#f3f2ef';context.fillRect(SPECTRUM_AXIS,SPECTRUM_SCORE_TOP,width-SPECTRUM_AXIS,scoreHeight);
+  context.fillStyle='#222a31';context.font='10px Segoe UI';context.textBaseline='top';context.fillText(`${chart.name} · ${showStaff&&showTab?'STAFF / TAB':showStaff?'STAFF':showTab?'TAB':'notation hidden'}`,SPECTRUM_AXIS+6,SPECTRUM_SCORE_TOP+4);
   const chartType=chart.type;
-  if(chartType==='guitar'||chartType==='bass'){
-   const strings=Math.max(1,chart.stringCount||chart.basePitches?.length||6),staffTop=SPECTRUM_SCORE_TOP+25,staffSpacing=5.5,staffBottom=staffTop+staffSpacing*4,tabTop=SPECTRUM_SCORE_TOP+78,tabSpacing=(SPECTRUM_SCORE_HEIGHT-87)/Math.max(1,strings-1),pitchClasses=[0,0,1,1,2,3,3,4,4,5,5,6],staffPitches=items.map(({pitch})=>pitch+12).sort((a,b)=>a-b),middlePitch=staffPitches.length?staffPitches[Math.floor(staffPitches.length/2)]:64,middleStep=(Math.floor(middlePitch/12)-1)*7+pitchClasses[middlePitch%12],staffBase=middleStep-4;
-   context.font='9px Segoe UI';context.textBaseline='middle';context.fillStyle='#555d64';context.fillText('STAFF',4,staffTop+staffSpacing*2);context.fillText('TAB',4,tabTop+tabSpacing*(strings-1)/2);
+  if((chartType==='guitar'||chartType==='bass')&&(showStaff||showTab)){
+   const strings=Math.max(1,chart.stringCount||chart.basePitches?.length||6),staffTop=SPECTRUM_SCORE_TOP+25,staffSpacing=5.5,staffBottom=staffTop+staffSpacing*4,tabTop=showStaff?SPECTRUM_SCORE_TOP+78:SPECTRUM_SCORE_TOP+20,tabSpacing=(scoreHeight-(showStaff?87:29))/Math.max(1,strings-1),pitchClasses=[0,0,1,1,2,3,3,4,4,5,5,6],staffPitches=items.map(({pitch})=>pitch+12).sort((a,b)=>a-b),middlePitch=staffPitches.length?staffPitches[Math.floor(staffPitches.length/2)]:64,middleStep=(Math.floor(middlePitch/12)-1)*7+pitchClasses[middlePitch%12],staffBase=middleStep-4;
+   context.font='9px Segoe UI';context.textBaseline='middle';context.fillStyle='#555d64';if(showStaff)context.fillText('STAFF',4,staffTop+staffSpacing*2);if(showTab)context.fillText('TAB',4,tabTop+tabSpacing*(strings-1)/2);
    context.strokeStyle='#91969a';context.lineWidth=.8;
-   for(let line=0;line<5;line++){const y=staffTop+line*staffSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
-   for(let string=0;string<strings;string++){const y=tabTop+(strings-1-string)*tabSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
-   context.fillStyle='#20262a';context.textBaseline='alphabetic';context.font=`${Math.round(staffSpacing*9.5)}px "Segoe UI Symbol","Noto Music",serif`;context.fillText(chartType==='bass'?'\u{1D122}':'\u{1D11E}',SPECTRUM_AXIS+2,staffBottom+staffSpacing*1.6);
-   context.font='bold 9px Segoe UI';context.fillText('8',SPECTRUM_AXIS+2+staffSpacing*1.6,staffBottom+staffSpacing*2.2);
+   if(showStaff)for(let line=0;line<5;line++){const y=staffTop+line*staffSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
+   if(showTab)for(let string=0;string<strings;string++){const y=tabTop+(strings-1-string)*tabSpacing;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();}
+   if(showStaff){context.fillStyle='#20262a';context.textBaseline='alphabetic';context.font=`${Math.round(staffSpacing*9.5)}px "Segoe UI Symbol","Noto Music",serif`;context.fillText(chartType==='bass'?'\u{1D122}':'\u{1D11E}',SPECTRUM_AXIS+2,staffBottom+staffSpacing*1.6);
+   context.font='bold 9px Segoe UI';context.fillText('8',SPECTRUM_AXIS+2+staffSpacing*1.6,staffBottom+staffSpacing*2.2);}
    context.textBaseline='middle';context.font='bold 10px Segoe UI';context.textAlign='center';
    for(const {note,pitch}of items){
     const string=Number.isInteger(note.string)?note.string:-1;if(string<0||string>=strings)continue;
     if(note.time<visibleLeft-18/scale||note.time>visibleRight+18/scale)continue;const x=vx(note.time);
     const y=tabTop+(strings-1-string)*tabSpacing,staffPitch=pitch+12,staffStep=(Math.floor(staffPitch/12)-1)*7+pitchClasses[staffPitch%12]-staffBase,noteY=staffBottom-staffStep*staffSpacing/2;
-    if((staffStep<0&&staffStep%2===0)||(staffStep>8&&(staffStep-8)%2===0)){const ledgerY=staffBottom-Math.floor(staffStep/2)*staffSpacing;context.beginPath();context.moveTo(x-7,ledgerY);context.lineTo(x+7,ledgerY);context.stroke();}
-    context.fillStyle='#20262a';context.font='10px Segoe UI';if(![0,2,4,5,7,9,11].includes(staffPitch%12))context.fillText('♯',x-11,noteY);
-    context.fillStyle='#20262a';context.beginPath();context.ellipse(x,noteY,5.5,3.8,-Math.PI/6,0,Math.PI*2);context.fill();
-    context.strokeStyle='#20262a';context.lineWidth=1;context.beginPath();context.moveTo(x+4,noteY);context.lineTo(x+4,noteY-17);context.stroke();
-    const sustain=Math.max(0,note.sustain||0),end=x+sustain*scale;if(sustain>0){context.strokeStyle='#65717a';context.lineWidth=1;context.beginPath();context.moveTo(x,y);context.lineTo(Math.max(x+7,end),y);context.stroke();}
-    context.fillStyle='#20262a';context.font='bold 10px Segoe UI';context.fillText(String(shownFret(note.fret)),x,y);
+    if(showStaff){
+     if((staffStep<0&&staffStep%2===0)||(staffStep>8&&(staffStep-8)%2===0)){const ledgerY=staffBottom-Math.floor(staffStep/2)*staffSpacing;context.beginPath();context.moveTo(x-7,ledgerY);context.lineTo(x+7,ledgerY);context.stroke();}
+     context.fillStyle='#20262a';context.font='10px Segoe UI';if(![0,2,4,5,7,9,11].includes(staffPitch%12))context.fillText('♯',x-11,noteY);
+     context.fillStyle='#20262a';context.beginPath();context.ellipse(x,noteY,5.5,3.8,-Math.PI/6,0,Math.PI*2);context.fill();
+     context.strokeStyle='#20262a';context.lineWidth=1;context.beginPath();context.moveTo(x+4,noteY);context.lineTo(x+4,noteY-17);context.stroke();
+    }
+    if(showTab){
+     const sustain=Math.max(0,note.sustain||0),end=x+sustain*scale;if(sustain>0){context.strokeStyle='#65717a';context.lineWidth=1;context.beginPath();context.moveTo(x,y);context.lineTo(Math.max(x+7,end),y);context.stroke();}
+     context.fillStyle='#20262a';context.font='bold 10px Segoe UI';context.fillText(String(shownFret(note.fret)),x,y);
+    }
    }
    context.textAlign='left';
-   if(chart.readOnly){context.fillStyle='#52585d';context.font='10px Segoe UI';context.fillText('Source notation retained · note events unavailable',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT-7);}
+   if(chart.readOnly){context.fillStyle='#52585d';context.font='10px Segoe UI';context.fillText('Source notation retained · note events unavailable',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+scoreHeight-7);}
+  }else if(chartType==='guitar'||chartType==='bass'){
+   context.fillStyle='#8b929a';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText('Staff and tab both hidden — use the controls above to show one',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+scoreHeight-9);
   }else if(chartType==='keys'){
-   const pitches=items.map(({pitch})=>pitch),low=pitches.length?Math.max(SPECTRUM_MIN_MIDI,Math.min(...pitches)-2):48,high=pitches.length?Math.min(SPECTRUM_MAX_MIDI,Math.max(...pitches)+2):72,step=(SPECTRUM_SCORE_HEIGHT-30)/Math.max(1,high-low+1),top=SPECTRUM_SCORE_TOP+24;
+   const pitches=items.map(({pitch})=>pitch),low=pitches.length?Math.max(SPECTRUM_MIN_MIDI,Math.min(...pitches)-2):48,high=pitches.length?Math.min(SPECTRUM_MAX_MIDI,Math.max(...pitches)+2):72,step=(scoreHeight-30)/Math.max(1,high-low+1),top=SPECTRUM_SCORE_TOP+24;
    for(let pitch=low;pitch<=high;pitch++){const y=top+(high-pitch)*step;context.fillStyle=pitch%12===0?'#d8d8d5':'#f3f2ef';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,step);context.strokeStyle='#c2c3c0';context.beginPath();context.moveTo(SPECTRUM_AXIS,y+step);context.lineTo(width,y+step);context.stroke();if(pitch%12===0){context.fillStyle='#555d64';context.font='9px Segoe UI';context.fillText(noteName(pitch),4,y+step/2);}}
    const keyOnsets=spectrumNoteOnsets(items);
    for(const {note,pitch}of items){if(pitch<low||pitch>high)continue;const x=vx(note.time),y=top+(high-pitch)*step+1,end=spectrumHeldEnd(note,keyOnsets,project().beats),w=Math.max(5,(end-note.time)*scale);context.fillStyle='#283b48';context.fillRect(x,y,w,Math.max(3,step-2));}
   }else if(chart.readOnly){
-   context.fillStyle='#52585d';context.font='11px Segoe UI';context.textBaseline='middle';context.fillText('Retained source score · note events are unavailable for overlay',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT/2);
+   context.fillStyle='#52585d';context.font='11px Segoe UI';context.textBaseline='middle';context.fillText('Retained source score · note events are unavailable for overlay',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+scoreHeight/2);
   }
-  context.fillStyle='#121c25';context.fillRect(SPECTRUM_AXIS,SPECTRUM_WAVE_TOP,width-SPECTRUM_AXIS,SPECTRUM_WAVE_HEIGHT);context.strokeStyle='#40505a';context.beginPath();context.moveTo(SPECTRUM_AXIS,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);context.lineTo(width,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);context.stroke();
+  context.fillStyle='#121c25';context.fillRect(SPECTRUM_AXIS,waveTop,width-SPECTRUM_AXIS,SPECTRUM_WAVE_HEIGHT);context.strokeStyle='#40505a';context.beginPath();context.moveTo(SPECTRUM_AXIS,waveTop+SPECTRUM_WAVE_HEIGHT/2);context.lineTo(width,waveTop+SPECTRUM_WAVE_HEIGHT/2);context.stroke();
   if(waveform?.length){
-   const audioDuration=audio.audioDuration||duration,center=SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2,firstX=Math.max(SPECTRUM_AXIS,Math.floor(vx(visibleLeft))),lastX=Math.min(width,Math.ceil(vx(visibleRight)));
+   const audioDuration=audio.audioDuration||duration,center=waveTop+SPECTRUM_WAVE_HEIGHT/2,firstX=Math.max(SPECTRUM_AXIS,Math.floor(vx(visibleLeft))),lastX=Math.min(width,Math.ceil(vx(visibleRight)));
    context.beginPath();context.moveTo(firstX,center);
    for(let x=firstX;x<lastX;x++){const time=(x+left-SPECTRUM_AXIS)/scale,index=Math.max(0,Math.min(waveform.length-1,Math.floor(time/audioDuration*waveform.length))),amplitude=Math.max(0,Math.min(1,waveform[index]))*SPECTRUM_WAVE_HEIGHT*.46;context.lineTo(x,center-amplitude);}
    for(let x=lastX-1;x>=firstX;x--){const time=(x+left-SPECTRUM_AXIS)/scale,index=Math.max(0,Math.min(waveform.length-1,Math.floor(time/audioDuration*waveform.length))),amplitude=Math.max(0,Math.min(1,waveform[index]))*SPECTRUM_WAVE_HEIGHT*.46;context.lineTo(x,center+amplitude);}
    context.closePath();context.fillStyle=spectrumBaseColor||SPECTRUM_BASE_COLOR_DEFAULT;context.globalAlpha=.72;context.fill();context.globalAlpha=1;
   }else{
-   context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(audio.buffer?'Audio waveform unavailable':'Import backing audio to display its waveform',SPECTRUM_AXIS+10,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);
+   context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(audio.buffer?'Audio waveform unavailable':'Import backing audio to display its waveform',SPECTRUM_AXIS+10,waveTop+SPECTRUM_WAVE_HEIGHT/2);
   }
-  context.fillStyle='#15202a';context.fillRect(SPECTRUM_AXIS,SPECTRUM_TOP-17,width-SPECTRUM_AXIS,17);
-  context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText('PITCH SPECTROGRAM · MIDI / SEMITONE LANES',SPECTRUM_AXIS+7,SPECTRUM_TOP-8);
+  context.fillStyle='#15202a';context.fillRect(SPECTRUM_AXIS,pitchTop-17,width-SPECTRUM_AXIS,17);
+  context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText('PITCH SPECTROGRAM · MIDI / SEMITONE LANES',SPECTRUM_AXIS+7,pitchTop-8);
   for(let pitch=firstPitch;pitch<=lastPitch;pitch++){
-   const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight;context.fillStyle=pitch%12===0?'#131a23':pitch%12===7?'#0e141c':'#0a0e14';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,rowHeight);
+   const y=pitchTop+(lastPitch-pitch)*rowHeight;context.fillStyle=pitch%12===0?'#131a23':pitch%12===7?'#0e141c':'#0a0e14';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,rowHeight);
    if(pitch%12===0){context.fillStyle='#c2cbd5';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(`${SPECTRUM_PITCH_NAMES[pitch%12]}${Math.floor(pitch/12)-1}`,3,y+rowHeight/2);}
    context.strokeStyle=pitch%12===0?'#53606c':'#202832';context.lineWidth=1;context.beginPath();context.moveTo(SPECTRUM_AXIS,y+.5);context.lineTo(width,y+.5);context.stroke();
   }
@@ -1708,19 +1722,19 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    const [baseR,baseG,baseB]=hexToRgb(spectrumBaseColor||SPECTRUM_BASE_COLOR_DEFAULT),pitchCount=analysis.maxMidi-analysis.minMidi+1,frameSeconds=analysis.hopSize/analysis.sampleRate,startFrame=Math.max(0,Math.floor(visibleLeft/frameSeconds)),endFrame=Math.min(analysis.frameCount,Math.ceil(visibleRight/frameSeconds));
    for(let frame=startFrame;frame<endFrame;frame++){
     const x0=vx(frame*frameSeconds),x1=vx(Math.min(duration,(frame+1)*frameSeconds)),cellWidth=Math.max(1,x1-x0),offset=frame*pitchCount;
-    for(let pitch=firstPitch;pitch<=lastPitch;pitch++){const index=pitch-analysis.minMidi;if(index<0||index>=pitchCount)continue;const value=analysis.values[offset+index];if(value<10)continue;const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight;context.fillStyle=`rgba(${baseR},${baseG},${baseB},${(value/255*.88).toFixed(3)})`;context.fillRect(x0,y,cellWidth,rowHeight);}
+    for(let pitch=firstPitch;pitch<=lastPitch;pitch++){const index=pitch-analysis.minMidi;if(index<0||index>=pitchCount)continue;const value=analysis.values[offset+index];if(value<10)continue;const y=pitchTop+(lastPitch-pitch)*rowHeight;context.fillStyle=`rgba(${baseR},${baseG},${baseB},${(value/255*.88).toFixed(3)})`;context.fillRect(x0,y,cellWidth,rowHeight);}
    }
   }else{
-   context.textBaseline='middle';context.font='12px Segoe UI';context.fillStyle='#778391';context.fillText(audio.buffer?'Analyze audio to show pitched energy':'Import backing audio, then analyze to show pitched energy',SPECTRUM_AXIS+12,SPECTRUM_TOP+20);
+   context.textBaseline='middle';context.font='12px Segoe UI';context.fillStyle='#778391';context.fillText(audio.buffer?'Analyze audio to show pitched energy':'Import backing audio, then analyze to show pitched energy',SPECTRUM_AXIS+12,pitchTop+20);
   }
-  context.textBaseline='top';context.font='10px Segoe UI';context.fillStyle='#aab4c2';context.fillText('TIME / BAR',4,8);context.fillText('AUDIO WAVEFORM',4,SPECTRUM_WAVE_TOP+4);
+  context.textBaseline='top';context.font='10px Segoe UI';context.fillStyle='#aab4c2';context.fillText('TIME / BAR',4,8);context.fillText('AUDIO WAVEFORM',4,waveTop+4);
   for(const beat of project().beats){if(beat.time<visibleLeft||beat.time>visibleRight)continue;const x=vx(beat.time);context.strokeStyle=beat.measure>=0?'#8995a566':'#63708338';context.lineWidth=beat.measure>=0?1.2:1;context.beginPath();context.moveTo(x,SPECTRUM_SCORE_TOP);context.lineTo(x,height);context.stroke();if(beat.measure>=0){context.fillStyle='#b9c3cf';context.fillText(String(beat.measure),x+3,8);}}
   for(const [index,a]of project().arrangements.entries()){
    if(a.type==='drums'||spectrumVisibleCharts.get(a.id)===false)continue;
    const color=spectrumColor(a,index),chartItems=spectrumChartNotes(a),onsets=spectrumNoteOnsets(chartItems),beats=project().beats;
    for(const {note,pitch}of chartItems){
     const start=note.time,end=spectrumHeldEnd(note,onsets,beats);if(end<visibleLeft||start>visibleRight)continue;const x=vx(start),w=Math.max(2,(end-start)*scale);
-    const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight+1,h=Math.max(1,rowHeight-2);
+    const y=pitchTop+(lastPitch-pitch)*rowHeight+1,h=Math.max(1,rowHeight-2);
     context.fillStyle=color;context.globalAlpha=.5;context.fillRect(x,y,w,h);
     context.globalAlpha=1;context.strokeStyle='#0a0e14';context.lineWidth=2;context.strokeRect(x+1,y+1,Math.max(0,w-2),Math.max(0,h-2));
     context.strokeStyle=color;context.lineWidth=1.2;context.strokeRect(x+.5,y+.5,Math.max(0,w-1),Math.max(0,h-1));
@@ -1738,8 +1752,15 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   for(const a of arrangements)if(a.type!=='drums'&&!spectrumVisibleCharts.has(a.id))spectrumVisibleCharts.set(a.id,true);
   const controls=arrangements.map((a,index)=>a.type==='drums'?`<label title="Drum charts do not contain pitched note positions"><input type="checkbox" disabled>Drums · ${esc(a.name)} (no pitches)</label>`:`<label><input type="checkbox" data-spectrum-chart="${esc(a.id)}" ${spectrumVisibleCharts.get(a.id)!==false?'checked':''}><span class="ws-spectrum-track-color" data-spectrum-color-pick="${esc(a.id)}" data-spectrum-color-index="${index}" style="background:${spectrumColor(a,index)}" title="Right-click to change this chart's colour"></span>${esc(a.name)}</label>`).join('');
   const staffOptions=arrangements.map(a=>`<option value="${esc(a.id)}" ${a.id===arrangementId?'selected':''}>${esc(a.name)} · ${esc(a.type)}</option>`).join('');
-  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Staff / tab <select data-spectrum-staff aria-label="Arrangement shown on the staff and tab panel">${staffOptions||'<option>No arrangements</option>'}</select></label><label>Time zoom <input type="range" min="3" max="400" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="3" max="22" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays" style="position:sticky;left:0"></canvas><div data-spectrum-spacer style="height:1px"></div></div>`;
+  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Staff / tab <select data-spectrum-staff aria-label="Arrangement shown on the staff and tab panel">${staffOptions||'<option>No arrangements</option>'}</select></label><label><input type="checkbox" data-spectrum-show-staff ${spectrumShowStaff?'checked':''}>Staff</label><label><input type="checkbox" data-spectrum-show-tab ${spectrumShowTab?'checked':''}>Tab</label><label>Time zoom <input type="range" min="3" max="400" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="3" max="22" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><label title="Fills in bass notes whose fundamental is too weak to detect on its own by also checking their octave and 12th harmonics. Can occasionally show a false note a 5th or an octave away from a real one."><input type="checkbox" data-spectrum-bass-harmonics ${spectrumBassHarmonics?'checked':''}>Bass harmonics</label><label title="Real audio often has genuine, strong content an octave or a 12th above a note (an overdriven bass's own 2nd harmonic, say) — accurate, but noisy if you only care about one instrument's part. This hides a row whenever a note 12 or 19 semitones below it is present, even when this row's own signal is real and strong."><input type="checkbox" data-spectrum-suppress-echo ${spectrumSuppressOctaveEcho?'checked':''}>Hide octave echoes</label><span class="ws-muted" style="flex-basis:100%;font-size:10px">Bass harmonics fills gaps from weak fundamentals, but can occasionally show a false note a 5th or octave away from a real one. Hide octave echoes removes real but likely-redundant content an octave or a 12th above a lower note, useful when focusing on one instrument's part.</span><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays" style="position:sticky;left:0"></canvas><div data-spectrum-spacer style="height:1px"></div></div>`;
   const next=$('spectrum-scroll');next.scrollLeft=scrollLeft;next.scrollTop=scrollTop;drawSpectrum();
+ }
+ function autoAnalyzeSpectrum(){
+  if(!audio.buffer||spectrumWorker)return;
+  const current=spectrumAnalysis&&spectrumAnalysis.generation===audio.decodeGeneration&&spectrumAnalysis.history===history?spectrumAnalysis:null;
+  if(current)return;
+  status('Analyzing audio for the spectrum view — this runs in the background and may take a little while for longer songs.');
+  analyzeSpectrumAudio().catch(error=>status(error.message,true));
  }
  async function analyzeSpectrumAudio(){
   if(!audio.buffer)throw Error('Import backing audio before analyzing its spectrum');
@@ -1761,7 +1782,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
     if(data.type==='result'){spectrumWorker=null;worker.terminate();if(buffer!==audio.buffer||owner!==history){spectrumStatus='Audio or project changed during analysis; analyze again.';renderSpectrum();resolve();return;}spectrumAnalysis={...data.result,generation,history:owner};spectrumStatus='Spectrum analysis complete.';renderSpectrum();resolve();}
    };
    worker.onerror=event=>{if(job!==spectrumGeneration)return;spectrumWorker=null;worker.terminate();spectrumStatus=`Analysis failed: ${event.message||'spectrum worker error'}`;renderSpectrum();reject(Error(spectrumStatus));};
-   worker.postMessage({type:'analyze',id:job,samples,sampleRate:buffer.sampleRate},[samples.buffer]);
+   worker.postMessage({type:'analyze',id:job,samples,sampleRate:buffer.sampleRate,useBassHarmonics:spectrumBassHarmonics,suppressOctaveEcho:spectrumSuppressOctaveEcho},[samples.buffer]);
   });
  }
  function render(){
@@ -1803,7 +1824,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   welcome:()=>recentDialog(true),'open-recent':()=>recentDialog(),
   demo:async()=>{const request=++openGeneration;if(await confirmReplace()&&request===openGeneration)switchProject(demoProject());},open:()=>openProjectDialog(),'open-folder':()=>$('open-folder').click(),'import-chart':()=>$('import-file').click(),'import-lyrics':()=>$('lyrics-file').click(),audio:()=>$('audio-file').click(),save:()=>saveAs(true),saveas:()=>saveAs(),
   undo:()=>navigateHistory(()=>history.undo()),redo:()=>navigateHistory(()=>history.redo()),'history-checkpoint':()=>{history.setCheckpoint();renderBottom();status('History checkpoint set');},'history-return':()=>navigateHistory(()=>history.returnToCheckpoint()),
-  tab:()=>{stopMidi();view='tab';render();},tempo:()=>{stopMidi();view='tempo';render();},tones:()=>{stopMidi();view='tones';render();},spectrum:()=>{stopMidi();view='spectrum';render();},'spectrum-analyze':()=>analyzeSpectrumAudio(),
+  tab:()=>{stopMidi();view='tab';render();},tempo:()=>{stopMidi();view='tempo';render();},tones:()=>{stopMidi();view='tones';render();},spectrum:()=>{stopMidi();view='spectrum';if(bottomVisible){bottomVisible=false;applyLayout();persistPreferences();}render();autoAnalyzeSpectrum();},'spectrum-analyze':()=>analyzeSpectrumAudio(),
   vocals:()=>{stopMidi();view='vocals';render();},
   'vocal-add':()=>vocalEdit('add',{time:cursor}),
   'vocal-phrase':async()=>{if(await dialog('Enter original lyric phrase',field('Text','vocal-phrase','')+field('Seconds per syllable','vocal-step',.5,'number','min="0.05" step="0.01"')+'<p class="ws-muted">Whitespace separates syllables. The whole phrase must fit within the song duration.</p>')){const rows=project().vocals||[],added=createVocalPhrase($('vocal-phrase').value,{at:cursor,step:Number($('vocal-step').value),duration:project().duration,count:rows.length,uid,existingIds:rows.map(row=>row.id)});pendingVocalSelection=added.map(row=>row.id);change('Enter vocal phrase',p=>{(p.vocals||=[]).push(...added);p.vocals.sort((a,b)=>a.time-b.time);});}},
@@ -2052,7 +2073,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  }));
  on(root,'contextmenu',safe(e=>{
   const colorPick=e.target.closest('[data-spectrum-color-pick]');if(colorPick){e.preventDefault();pickSpectrumColor(colorPick.dataset.spectrumColorPick,Number(colorPick.dataset.spectrumColorIndex));return;}
-  if(e.target.id==='ws-spectrum-canvas'&&(e.offsetY>=SPECTRUM_WAVE_TOP&&e.offsetY<SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT||e.offsetY>=SPECTRUM_TOP-17)){e.preventDefault();pickSpectrumBaseColor();}
+  if(e.target.id==='ws-spectrum-canvas'){const waveTop=spectrumWaveTop(),pitchTop=spectrumPitchTop();if(e.offsetY>=waveTop&&e.offsetY<waveTop+SPECTRUM_WAVE_HEIGHT||e.offsetY>=pitchTop-17){e.preventDefault();pickSpectrumBaseColor();}}
  }));
  async function editChord(index){
   const a=arrangement(),c=a.chord_templates[index];
@@ -2074,6 +2095,10 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(e.target.dataset.vocalField){const key=e.target.dataset.vocalField,raw=e.target.value,value=Number(raw);if(key!=='text'&&!(key==='pitch'&&raw==='')&&(!raw.trim()||!Number.isFinite(value)||value<0||(key==='pitch'&&(!Number.isInteger(value)||value>127))))throw Error('Vocal timing must be finite and nonnegative; optional pitch must be an integer0-127');if(key!=='time')changeVocalField('Edit vocal syllable',e.target.dataset.vocalId,key,key==='text'?raw:key==='pitch'&&raw===''?undefined:value);else{pendingVocalSelection=[e.target.dataset.vocalId];change('Edit vocal syllable',p=>{const vocal=p.vocals.find(v=>v.id===e.target.dataset.vocalId);if(!vocal)throw Error('The vocal syllable no longer exists');vocal.time=value;p.vocals.sort((a,b)=>a.time-b.time);});}}
   if(e.target.dataset.spectrumChart!==undefined){spectrumVisibleCharts.set(e.target.dataset.spectrumChart,e.target.checked);drawSpectrum();}
   if(e.target.dataset.spectrumStaff!==undefined){$('arrangement').value=e.target.value;$('arrangement').dispatchEvent(new Event('change',{bubbles:true}));}
+  if(e.target.dataset.spectrumBassHarmonics!==undefined){spectrumBassHarmonics=e.target.checked;if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Bass harmonics setting changed; analyze again.';}persistPreferences();renderSpectrum();}
+  if(e.target.dataset.spectrumSuppressEcho!==undefined){spectrumSuppressOctaveEcho=e.target.checked;if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Octave echo setting changed; analyze again.';}persistPreferences();renderSpectrum();}
+  if(e.target.dataset.spectrumShowStaff!==undefined){spectrumShowStaff=e.target.checked;persistPreferences();drawSpectrum();}
+  if(e.target.dataset.spectrumShowTab!==undefined){spectrumShowTab=e.target.checked;persistPreferences();drawSpectrum();}
   updateTonePreview(true);
  }));
  on(root,'input',e=>{const target=e.target;if(target.dataset.spectrumZoom!==undefined){spectrumZoom=Number(target.value);const output=root.querySelector('[data-spectrum-zoom-value]');if(output)output.textContent=`${spectrumZoom} px/s`;drawSpectrum();}if(target.dataset.spectrumSemitoneHeight!==undefined){spectrumSemitoneHeight=Number(target.value);const output=root.querySelector('[data-spectrum-semitone-value]');if(output)output.textContent=`${spectrumSemitoneHeight} px / semitone`;drawSpectrum();}if(target.dataset.pan){const bus=target.dataset.pan;audio.setPan(bus,Number(target.value)/100);root.querySelector(`[data-pan-value="${bus}"]`).textContent=Math.round(audio.pans[bus]*100);}if(target.dataset.songEq!==undefined){const i=Number(target.dataset.songEq),eq=[...audio.songFX.eq];eq[i]=Number(target.value);audio.setSongFX({eq});root.querySelector(`[data-eq-value="${i}"]`).textContent=eq[i]+' dB';root.querySelector('[data-song-fx-preset]').value='';}});
@@ -2286,8 +2311,8 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  audio.onEnded=()=>{stopMidi();cursor=audio.currentTime;updateClock();if(view==='spectrum')drawSpectrum();};audio.setEnabled('metronome',false);audio.setGain('guide',0.7);audio.setGain('master',Number($('master').value)/100);audio.setProject(project(),arrangement());
  const preferences=readPreferences();staveTheme=preferences.staveTheme==='light'?'light':'dark';showRests=preferences.showRests!==false;if(preferences.liveMonitor)liveMonitorOptions={...liveMonitorOptions,...preferences.liveMonitor};if(preferences.lyric){lyricMode=preferences.lyric.mode==='tap'?'tap':'check';for(const key of ['scope','leadIn','latency'])if(preferences.lyric[key]!==undefined)lyricOptions[key]=preferences.lyric[key];}inspectorVisible=preferences.inspectorVisible??inspectorVisible;inspectorWidth=preferences.inspectorWidth??inspectorWidth;bottomHeight=preferences.bottomHeight??bottomHeight;bottomVisible=preferences.bottomVisible??bottomVisible;if(preferences.liveView&&typeof preferences.liveView==='object')liveOptions={lowStringTop:preferences.liveView.lowStringTop!==false,leftHanded:preferences.liveView.leftHanded===true,speed:Number.isFinite(preferences.liveView.speed)?Math.max(.5,Math.min(2,preferences.liveView.speed)):1,renderer:typeof preferences.liveView.renderer==='string'?preferences.liveView.renderer:'oce'};if(preferences.keyboard&&typeof preferences.keyboard==='object'){keyProfile=PROFILE_IDS.includes(preferences.keyboard.profile)?preferences.keyboard.profile:'oce';keyOverrides=preferences.keyboard.overrides&&typeof preferences.keyboard.overrides==='object'?preferences.keyboard.overrides:{};techniqueToggleEach=preferences.keyboard.each===true;mouseModel=preferences.keyboard.mouse==='eof'?'eof':'standard';}refreshMenuKeys();if(preferences.chordStrip&&typeof preferences.chordStrip==='object')chordStrip={visible:preferences.chordStrip.visible!==false,open:preferences.chordStrip.open!==false,position:preferences.chordStrip.position==='above'?'above':'below',upright:preferences.chordStrip.upright===true};zoom=preferences.zoom??zoom;viewZoom={tab:zoom,tempo:zoom,...preferences.viewZoom};laneScales={...laneScales,...preferences.laneScales};rollOrientations={...rollOrientations,...preferences.rollOrientations};zoom=viewZoom.tab;snap=preferences.snap??snap;fretConvention=preferences.fretConvention??fretConvention;invertStrings=preferences.invertStrings??invertStrings;validationProfile=preferences.validationProfile??validationProfile;countInOptions={...countInOptions,...preferences.countIn};
  if(preferences.mixer){try{audio.restoreMixerState(preferences.mixer);}catch{}}if(preferences.speed)audio.setSpeed(preferences.speed);if(preferences.pitch!==undefined)audio.setPitch(preferences.pitch);click=audio.enabled.metronome;guide=audio.enabled.guide;$('zoom').value=zoom;$('snap').value=snap;$('speed').value=audio.speed*100;$('speed-value').textContent=`${Math.round(audio.speed*100)}%`;$('pitch').value=audio.pitch;$('master').value=audio.gains.master*100;
- shadeHands=preferences.shadeHands??shadeHands;pianoPalette=preferences.pianoPalette??pianoPalette;audio.quality=preferences.quality??'fast';qualityMessage=audio.quality==='spectral'?'Spectral preview selected; preparation starts on Play':'Fast granular preview';sustainOptions={...sustainOptions,...preferences.sustain};spectrumColorOverrides=preferences.spectrumColors&&typeof preferences.spectrumColors==='object'?{...preferences.spectrumColors}:{};spectrumBaseColor=typeof preferences.spectrumBaseColor==='string'?preferences.spectrumBaseColor:null;
- function persistPreferences(){writePreferences({liveView:{...liveOptions},liveMonitor:{...liveMonitorOptions},keyboard:{profile:keyProfile,overrides:keyOverrides,each:techniqueToggleEach,mouse:mouseModel},inspectorVisible,inspectorWidth,bottomHeight,bottomVisible,chordStrip:{...chordStrip},zoom,viewZoom:{...viewZoom},laneScales:{...laneScales},rollOrientations:{...rollOrientations},snap,fretConvention,invertStrings,validationProfile,shadeHands,pianoPalette,sustain:{...sustainOptions},quality:audio.quality,speed:audio.speed,pitch:audio.pitch,mixer:audio.getMixerState(),countIn:{...countInOptions},staveTheme,showRests,lyric:{mode:lyricMode,...lyricOptions},spectrumColors:{...spectrumColorOverrides},spectrumBaseColor});}
+ shadeHands=preferences.shadeHands??shadeHands;pianoPalette=preferences.pianoPalette??pianoPalette;audio.quality=preferences.quality??'fast';qualityMessage=audio.quality==='spectral'?'Spectral preview selected; preparation starts on Play':'Fast granular preview';sustainOptions={...sustainOptions,...preferences.sustain};spectrumColorOverrides=preferences.spectrumColors&&typeof preferences.spectrumColors==='object'?{...preferences.spectrumColors}:{};spectrumBaseColor=typeof preferences.spectrumBaseColor==='string'?preferences.spectrumBaseColor:null;spectrumBassHarmonics=preferences.spectrumBassHarmonics!==false;spectrumShowStaff=preferences.spectrumShowStaff!==false;spectrumShowTab=preferences.spectrumShowTab!==false;spectrumSuppressOctaveEcho=preferences.spectrumSuppressOctaveEcho===true;
+ function persistPreferences(){writePreferences({liveView:{...liveOptions},liveMonitor:{...liveMonitorOptions},keyboard:{profile:keyProfile,overrides:keyOverrides,each:techniqueToggleEach,mouse:mouseModel},inspectorVisible,inspectorWidth,bottomHeight,bottomVisible,chordStrip:{...chordStrip},zoom,viewZoom:{...viewZoom},laneScales:{...laneScales},rollOrientations:{...rollOrientations},snap,fretConvention,invertStrings,validationProfile,shadeHands,pianoPalette,sustain:{...sustainOptions},quality:audio.quality,speed:audio.speed,pitch:audio.pitch,mixer:audio.getMixerState(),countIn:{...countInOptions},staveTheme,showRests,lyric:{mode:lyricMode,...lyricOptions},spectrumColors:{...spectrumColorOverrides},spectrumBaseColor,spectrumBassHarmonics,spectrumShowStaff,spectrumShowTab,spectrumSuppressOctaveEcho});}
  on(root.querySelector('.ws-menu'),'pointerdown',refreshActionAvailability);
  root.addEventListener('keydown',e=>{if(e.key==='F10'||e.target.closest('.ws-menu'))refreshActionAvailability();},{capture:true,signal:abort.signal});
  on(root,'click',e=>{if(e.target.closest('button[data-action]'))refreshActionAvailability();});
