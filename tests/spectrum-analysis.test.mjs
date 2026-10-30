@@ -20,3 +20,14 @@ test('spectrum analysis maps silence to the floor and rejects invalid PCM',async
  await assert.rejects(analyzeSpectrum([],48000),/decoded mono audio/);
  await assert.rejects(analyzeSpectrum(new Float32Array(4),7000),/valid sample rate/);
 });
+
+test('spectrum analysis suppresses broadband noise relative to clear pitched energy',async()=>{
+ const sampleRate=48000,samples=new Float32Array(sampleRate);
+ let state=0x5eed1234;
+ for(let i=0;i<samples.length;i++){state=(1664525*state+1013904223)>>>0;samples[i]=.55*Math.sin(2*Math.PI*440*i/sampleRate)+.025*((state/0x80000000)-1);}
+ const result=await analyzeSpectrum(samples,sampleRate);
+ const value=(frame,pitch)=>result.values[frame*(result.maxMidi-result.minMidi+1)+pitch-result.minMidi];
+ const frame=5;assert.ok(value(frame,69)>180,`A4 should remain prominent, got ${value(frame,69)}`);
+ const visiblePitches=Array.from({length:result.maxMidi-result.minMidi+1},(_,index)=>value(frame,index+result.minMidi)).filter(energy=>energy>48).length;
+ assert.ok(visiblePitches<24,`Noise should not fill the pitch map, but ${visiblePitches} pitches were prominent`);
+});

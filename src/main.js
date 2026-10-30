@@ -123,7 +123,7 @@ function mount(root){
  let staveTheme='dark',showRests=true,staveMode='select',staveLength=1,staveHits=[],staveMetricsCache=null,staveKeyCache=null;
 let history=new History(demoProject()),arrangementId=history.project.arrangements[0].id,view='tab',inspector='settings',bottom='errors',selection=new Set(),cursor=0,lane=0,lastFret=3,zoom=110,snap=4,tool='pointer',clipboard=[],drag=null,dirty=false,saveHandle=null,lastSaveFormat='json',exportOptions={},lastDestination='',tapTimes=[],waveform=null,loadedAudio=null,draftTimer=null;
  let toneImportGeneration=0,tempoImportGeneration=0,chartImportGeneration=0;
- let spectrumAnalysis=null,spectrumWorker=null,spectrumGeneration=0,spectrumRenderAt=0,spectrumVisibleCharts=new Map(),spectrumZoom=12,spectrumStatus='Import backing audio, then analyze its pitched energy.';
+ let spectrumAnalysis=null,spectrumWorker=null,spectrumGeneration=0,spectrumRenderAt=0,spectrumVisibleCharts=new Map(),spectrumZoom=12,spectrumSemitoneHeight=6,spectrumStatus='Import backing audio, then analyze its pitched energy.';
  let midiAppendScope=null,midiRenderFrame=null,midiRenderOwner=null;
  let midiUiPending=false,midiSetupPromise=null,recordStartGeneration=0,recordStartPending=false,transportStartGeneration=0,localStartPending=false;
  let click=false,guide=true,loop=false,ramp={enabled:false,startSpeed:0.75,endSpeed:1,duration:30},onsets=[],gridSuggestion=null,selectedTone=null,tonePreview=null,previewToneName=null,previewToneDefinition=null,previewToneArrangement=null,auditionSelectedTone=true,selectionRange=null,midiConnection=null,midiRecorder=null,midiRecording=false,midiAuditioning=false,midiConnectionGeneration=0,markerSelection=null,pianoLow=21,pianoHigh=108,invertStrings=false,preview=null;
@@ -1594,13 +1594,9 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
 
  function localToneSelection(){const a=arrangement(),time=audio.isPlaying?audio.currentTime:cursor,allocated=(a.tones.changes||[]).findLast(t=>t.time<=time)?.name||a.tones.base,name=view==='tones'&&auditionSelectedTone&&Object.hasOwn(a.tones.definitions||{},selectedTone)?selectedTone:allocated;return{a,name,tone:a.tones.definitions?.[name]};}
  function updateTonePreview(force=false){if(!tonePreview&&!liveInput.effect)return;const{a,name,tone}=localToneSelection(),adaptiveState=toneEnvelopeStatus(audio.context).state;if(force||name!==previewToneName||tone!==previewToneDefinition||a.id!==previewToneArrangement||adaptiveState!==previewAdaptiveState){try{if(typeof tonePreview?.setTone==='function'&&typeof tonePreview?.clearTone==='function'){if(tone?.GearList)tonePreview.setTone(tone);else tonePreview.clearTone();toneEffectOwners.set(tonePreview,{tone,arrangementId:a.id});}if(typeof liveInput.effect?.selectTone==='function')liveInput.effect.selectTone(tone,name);else if(typeof liveInput.effect?.setTone==='function'&&typeof liveInput.effect?.clearTone==='function'){if(tone?.GearList)liveInput.effect.setTone(tone);else liveInput.effect.clearTone();toneEffectOwners.set(liveInput.effect,{tone,arrangementId:a.id});}}catch(error){if(typeof tonePreview?.clearTone==='function')tonePreview.clearTone();status('Local tone preview bypassed: '+error.message,true);}previewToneName=name;previewToneDefinition=tone;previewToneArrangement=a.id;previewAdaptiveState=adaptiveState;refreshToneDisclosures();}}
- const SPECTRUM_MIN_MIDI=24,SPECTRUM_MAX_MIDI=108,SPECTRUM_AXIS=52,SPECTRUM_WAVE_TOP=30,SPECTRUM_WAVE_HEIGHT=52,SPECTRUM_TOP=104,SPECTRUM_ROW=9;
+ const SPECTRUM_MIN_MIDI=24,SPECTRUM_MAX_MIDI=108,SPECTRUM_AXIS=52,SPECTRUM_SCORE_TOP=30,SPECTRUM_SCORE_HEIGHT=126,SPECTRUM_WAVE_TOP=170,SPECTRUM_WAVE_HEIGHT=46,SPECTRUM_TOP=232;
  const SPECTRUM_CHART_COLORS=['#f29a56','#58c5e8','#c397f5','#9acb69','#ed7893','#e5ce61'];
  const SPECTRUM_PITCH_NAMES=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
- const SPECTRUM_HEAT=(()=>{
-  const stops=[[10,16,27],[24,73,125],[28,158,179],[171,207,116],[255,205,105]];
-  return Array.from({length:256},(_,value)=>{const position=value/255*(stops.length-1),index=Math.min(stops.length-2,Math.floor(position)),fraction=position-index,rgb=stops[index].map((channel,i)=>Math.round(channel+(stops[index+1][i]-channel)*fraction));return `rgb(${rgb.join(',')})`;});
- })();
  function spectrumChartNotes(a){
   if(a.type==='drums'||a.readOnly)return[];
   const difficulty=a.difficulties?.find(level=>level.difficulty===(a.activeDifficulty??0)),notes=difficulty?.notes||a.notes||[],chords=difficulty?.chords||a.chords||[];
@@ -1609,12 +1605,41 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  function spectrumColor(index){return SPECTRUM_CHART_COLORS[index%SPECTRUM_CHART_COLORS.length];}
  function drawSpectrum(){
   const canvas=$('spectrum-canvas'),scroll=$('spectrum-scroll');if(!canvas||!scroll||view!=='spectrum')return;
-  const duration=Math.max(.1,project().duration),scale=Math.min(spectrumZoom,15000/duration),width=Math.max(scroll.clientWidth,Math.min(15000,SPECTRUM_AXIS+duration*scale)),height=SPECTRUM_TOP+(SPECTRUM_MAX_MIDI-SPECTRUM_MIN_MIDI+1)*SPECTRUM_ROW+8;
+  const duration=Math.max(.1,project().duration),scale=Math.min(spectrumZoom,15000/duration),width=Math.max(scroll.clientWidth,Math.min(15000,SPECTRUM_AXIS+duration*scale)),rowHeight=spectrumSemitoneHeight,height=SPECTRUM_TOP+(SPECTRUM_MAX_MIDI-SPECTRUM_MIN_MIDI+1)*rowHeight+8;
   canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;
   const dpr=Math.min(window.devicePixelRatio||1,2,Math.sqrt(10000000/Math.max(1,width*height))),pixelWidth=Math.max(1,Math.floor(width*dpr)),pixelHeight=Math.max(1,Math.floor(height*dpr));
   if(canvas.width!==pixelWidth||canvas.height!==pixelHeight){canvas.width=pixelWidth;canvas.height=pixelHeight;}
   const context=canvas.getContext('2d');context.setTransform(dpr,0,0,dpr,0,0);context.fillStyle='#0a0e14';context.fillRect(0,0,width,height);
   const left=scroll.scrollLeft,visibleLeft=Math.max(0,(left-SPECTRUM_AXIS)/scale),visibleRight=Math.min(duration,(left+scroll.clientWidth-SPECTRUM_AXIS)/scale),firstPitch=SPECTRUM_MIN_MIDI,lastPitch=SPECTRUM_MAX_MIDI;
+  const chart=arrangement(),items=spectrumChartNotes(chart);
+  context.fillStyle='#f3f2ef';context.fillRect(SPECTRUM_AXIS,SPECTRUM_SCORE_TOP,width-SPECTRUM_AXIS,SPECTRUM_SCORE_HEIGHT);
+  context.fillStyle='#222a31';context.font='10px Segoe UI';context.textBaseline='top';context.fillText(`${chart.name} · TAB / SCORE`,SPECTRUM_AXIS+6,SPECTRUM_SCORE_TOP+4);
+  const chartType=chart.type;
+  if(chartType==='guitar'||chartType==='bass'){
+   const strings=Math.max(1,chart.stringCount||chart.basePitches?.length||6),rowHeight=Math.min(18,(SPECTRUM_SCORE_HEIGHT-30)/strings),firstY=SPECTRUM_SCORE_TOP+24;
+   context.font='10px Segoe UI';context.textBaseline='middle';
+   for(let string=0;string<strings;string++){
+    const y=firstY+(string+.5)*rowHeight,pitch=(chart.basePitches?.[string]||0)+(chart.tuning?.[string]||0)+(chart.capo||0);
+    context.strokeStyle='#91969a';context.lineWidth=.8;context.beginPath();context.moveTo(SPECTRUM_AXIS,y);context.lineTo(width,y);context.stroke();
+    context.fillStyle='#555d64';context.fillText(noteName(pitch),4,y);
+   }
+   if(chart.readOnly)context.fillStyle='#52585d',context.fillText('Source notation is retained but has no editable note events',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT/2);
+   for(const {note}of items){
+    const string=Number.isInteger(note.string)?note.string:-1;if(string<0||string>=strings)continue;
+    const rowHeightForNote=Math.min(18,(SPECTRUM_SCORE_HEIGHT-30)/strings),y=SPECTRUM_SCORE_TOP+24+(string+.5)*rowHeightForNote,x=SPECTRUM_AXIS+note.time*scale;
+    if(x<SPECTRUM_AXIS+visibleLeft*scale-12||x>SPECTRUM_AXIS+visibleRight*scale+12)continue;
+    const sustain=Math.max(0,note.sustain||0),end=x+sustain*scale;
+    if(sustain>0){context.strokeStyle='#65717a';context.lineWidth=1;context.beginPath();context.moveTo(x,y);context.lineTo(Math.max(x+8,end),y);context.stroke();}
+    context.fillStyle='#f3f2ef';context.strokeStyle='#30373b';context.lineWidth=1;context.beginPath();context.roundRect(x-7,y-7,14,14,3);context.fill();context.stroke();
+    context.fillStyle='#20262a';context.font='bold 10px Segoe UI';context.textAlign='center';context.textBaseline='middle';context.fillText(String(shownFret(note.fret)),x,y+.5);context.textAlign='left';
+   }
+  }else if(chartType==='keys'){
+   const pitches=items.map(({pitch})=>pitch),low=pitches.length?Math.max(SPECTRUM_MIN_MIDI,Math.min(...pitches)-2):48,high=pitches.length?Math.min(SPECTRUM_MAX_MIDI,Math.max(...pitches)+2):72,step=(SPECTRUM_SCORE_HEIGHT-30)/Math.max(1,high-low+1),top=SPECTRUM_SCORE_TOP+24;
+   for(let pitch=low;pitch<=high;pitch++){const y=top+(high-pitch)*step;context.fillStyle=pitch%12===0?'#d8d8d5':'#f3f2ef';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,step);context.strokeStyle='#c2c3c0';context.beginPath();context.moveTo(SPECTRUM_AXIS,y+step);context.lineTo(width,y+step);context.stroke();if(pitch%12===0){context.fillStyle='#555d64';context.font='9px Segoe UI';context.fillText(noteName(pitch),4,y+step/2);}}
+   for(const {note,pitch}of items){if(pitch<low||pitch>high)continue;const x=SPECTRUM_AXIS+note.time*scale,y=top+(high-pitch)*step+1,w=Math.max(5,(note.sustain||.08)*scale);context.fillStyle='#283b48';context.fillRect(x,y,w,Math.max(3,step-2));}
+  }else if(chart.readOnly){
+   context.fillStyle='#52585d';context.font='11px Segoe UI';context.textBaseline='middle';context.fillText('Retained source score · note events are unavailable for overlay',SPECTRUM_AXIS+12,SPECTRUM_SCORE_TOP+SPECTRUM_SCORE_HEIGHT/2);
+  }
   context.fillStyle='#121c25';context.fillRect(SPECTRUM_AXIS,SPECTRUM_WAVE_TOP,width-SPECTRUM_AXIS,SPECTRUM_WAVE_HEIGHT);context.strokeStyle='#40505a';context.beginPath();context.moveTo(SPECTRUM_AXIS,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);context.lineTo(width,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);context.stroke();
   if(waveform?.length){
    const audioDuration=audio.audioDuration||duration,center=SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2,firstX=Math.max(SPECTRUM_AXIS,Math.floor(SPECTRUM_AXIS+visibleLeft*scale)),lastX=Math.min(width,Math.ceil(SPECTRUM_AXIS+visibleRight*scale));
@@ -1626,10 +1651,10 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(audio.buffer?'Audio waveform unavailable':'Import backing audio to display its waveform',SPECTRUM_AXIS+10,SPECTRUM_WAVE_TOP+SPECTRUM_WAVE_HEIGHT/2);
   }
   context.fillStyle='#15202a';context.fillRect(SPECTRUM_AXIS,SPECTRUM_TOP-17,width-SPECTRUM_AXIS,17);
-  context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText('DETECTED PITCH ENERGY · CHART NOTES',SPECTRUM_AXIS+7,SPECTRUM_TOP-8);
+  context.fillStyle='#aab4c2';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText('PITCH SPECTROGRAM · MIDI / SEMITONE LANES',SPECTRUM_AXIS+7,SPECTRUM_TOP-8);
   for(let pitch=firstPitch;pitch<=lastPitch;pitch++){
-   const y=SPECTRUM_TOP+(lastPitch-pitch)*SPECTRUM_ROW;context.fillStyle=pitch%12===0?'#131a23':pitch%12===7?'#0e141c':'#0a0e14';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,SPECTRUM_ROW);
-   if(pitch%12===0){context.fillStyle='#c2cbd5';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(`${SPECTRUM_PITCH_NAMES[pitch%12]}${Math.floor(pitch/12)-1}`,3,y+SPECTRUM_ROW/2);}
+   const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight;context.fillStyle=pitch%12===0?'#131a23':pitch%12===7?'#0e141c':'#0a0e14';context.fillRect(SPECTRUM_AXIS,y,width-SPECTRUM_AXIS,rowHeight);
+   if(pitch%12===0){context.fillStyle='#c2cbd5';context.font='10px Segoe UI';context.textBaseline='middle';context.fillText(`${SPECTRUM_PITCH_NAMES[pitch%12]}${Math.floor(pitch/12)-1}`,3,y+rowHeight/2);}
    context.strokeStyle=pitch%12===0?'#53606c':'#202832';context.lineWidth=1;context.beginPath();context.moveTo(SPECTRUM_AXIS,y+.5);context.lineTo(width,y+.5);context.stroke();
   }
   const analysis=spectrumAnalysis&&spectrumAnalysis.generation===audio.decodeGeneration&&spectrumAnalysis.history===history?spectrumAnalysis:null;
@@ -1637,24 +1662,24 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    const pitchCount=analysis.maxMidi-analysis.minMidi+1,frameSeconds=analysis.hopSize/analysis.sampleRate,startFrame=Math.max(0,Math.floor(visibleLeft/frameSeconds)),endFrame=Math.min(analysis.frameCount,Math.ceil(visibleRight/frameSeconds));
    for(let frame=startFrame;frame<endFrame;frame++){
     const x0=SPECTRUM_AXIS+frame*frameSeconds*scale,x1=SPECTRUM_AXIS+Math.min(duration,(frame+1)*frameSeconds)*scale,cellWidth=Math.max(1,x1-x0),offset=frame*pitchCount;
-    for(let pitch=firstPitch;pitch<=lastPitch;pitch++){const index=pitch-analysis.minMidi;if(index<0||index>=pitchCount)continue;const value=analysis.values[offset+index];if(value<10)continue;const y=SPECTRUM_TOP+(lastPitch-pitch)*SPECTRUM_ROW;context.fillStyle=SPECTRUM_HEAT[value];context.fillRect(x0,y,cellWidth,SPECTRUM_ROW);}
+    for(let pitch=firstPitch;pitch<=lastPitch;pitch++){const index=pitch-analysis.minMidi;if(index<0||index>=pitchCount)continue;const value=analysis.values[offset+index];if(value<10)continue;const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight;context.fillStyle=`rgba(0,195,188,${(value/255*.88).toFixed(3)})`;context.fillRect(x0,y,cellWidth,rowHeight);}
    }
   }else{
    context.textBaseline='middle';context.font='12px Segoe UI';context.fillStyle='#778391';context.fillText(audio.buffer?'Analyze audio to show pitched energy':'Import backing audio, then analyze to show pitched energy',SPECTRUM_AXIS+12,SPECTRUM_TOP+20);
   }
   context.textBaseline='top';context.font='10px Segoe UI';context.fillStyle='#aab4c2';context.fillText('TIME / BAR',4,8);context.fillText('AUDIO WAVEFORM',4,SPECTRUM_WAVE_TOP+4);
-  for(const beat of project().beats){if(beat.time<visibleLeft||beat.time>visibleRight)continue;const x=SPECTRUM_AXIS+beat.time*scale;context.strokeStyle=beat.measure>=0?'#8995a566':'#63708338';context.lineWidth=beat.measure>=0?1.2:1;context.beginPath();context.moveTo(x,SPECTRUM_WAVE_TOP);context.lineTo(x,height);context.stroke();if(beat.measure>=0){context.fillStyle='#b9c3cf';context.fillText(String(beat.measure),x+3,8);}}
+  for(const beat of project().beats){if(beat.time<visibleLeft||beat.time>visibleRight)continue;const x=SPECTRUM_AXIS+beat.time*scale;context.strokeStyle=beat.measure>=0?'#8995a566':'#63708338';context.lineWidth=beat.measure>=0?1.2:1;context.beginPath();context.moveTo(x,SPECTRUM_SCORE_TOP);context.lineTo(x,height);context.stroke();if(beat.measure>=0){context.fillStyle='#b9c3cf';context.fillText(String(beat.measure),x+3,8);}}
   for(const [index,a]of project().arrangements.entries()){
    if(a.type==='drums'||spectrumVisibleCharts.get(a.id)===false)continue;
    context.fillStyle=spectrumColor(index);context.globalAlpha=.78;
    for(const {note,pitch}of spectrumChartNotes(a)){
     const start=note.time,end=start+Math.max(.09,note.sustain||0),x=SPECTRUM_AXIS+start*scale,w=Math.max(2,end*scale-x),right=x+w;if(right<SPECTRUM_AXIS+visibleLeft*scale||x>SPECTRUM_AXIS+visibleRight*scale)continue;
-    const y=SPECTRUM_TOP+(lastPitch-pitch)*SPECTRUM_ROW+1;context.fillRect(x,y,w,SPECTRUM_ROW-2);
+    const y=SPECTRUM_TOP+(lastPitch-pitch)*rowHeight+1;context.globalAlpha=.7;context.fillRect(x,y,w,Math.max(1,rowHeight-2));context.globalAlpha=.78;
    }
    context.globalAlpha=1;
   }
   const playTime=audio.isPlaying?audio.currentTime:cursor,cursorX=SPECTRUM_AXIS+playTime*scale;
-  if(cursorX>=SPECTRUM_AXIS+visibleLeft*scale&&cursorX<=SPECTRUM_AXIS+visibleRight*scale){context.strokeStyle='#fff0b5';context.lineWidth=1.5;context.beginPath();context.moveTo(cursorX,SPECTRUM_WAVE_TOP);context.lineTo(cursorX,height);context.stroke();}
+  if(cursorX>=SPECTRUM_AXIS+visibleLeft*scale&&cursorX<=SPECTRUM_AXIS+visibleRight*scale){context.strokeStyle='#ff725e';context.lineWidth=2;context.beginPath();context.moveTo(cursorX,SPECTRUM_SCORE_TOP);context.lineTo(cursorX,height);context.stroke();}
   const status=$('spectrum-status');if(status)status.textContent=spectrumWorker?spectrumStatus:analysis?`Analyzed · ${analysis.fftSize} sample window · ${(analysis.hopSize/analysis.sampleRate*1000).toFixed(0)} ms steps`:spectrumStatus;
  }
  function renderSpectrum(){
@@ -1663,7 +1688,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   const previous=$('spectrum-scroll'),scrollLeft=previous?.scrollLeft||0,scrollTop=previous?.scrollTop||0,arrangements=project().arrangements;
   for(const a of arrangements)if(a.type!=='drums'&&!spectrumVisibleCharts.has(a.id))spectrumVisibleCharts.set(a.id,true);
   const controls=arrangements.map((a,index)=>a.type==='drums'?`<label title="Drum charts do not contain pitched note positions"><input type="checkbox" disabled>Drums · ${esc(a.name)} (no pitches)</label>`:`<label><input type="checkbox" data-spectrum-chart="${esc(a.id)}" ${spectrumVisibleCharts.get(a.id)!==false?'checked':''}><span class="ws-spectrum-track-color" style="background:${spectrumColor(index)}"></span>${esc(a.name)}</label>`).join('');
-  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Time zoom <input type="range" min="3" max="48" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays"></canvas></div>`;
+  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Time zoom <input type="range" min="3" max="48" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="4" max="14" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays"></canvas></div>`;
   const next=$('spectrum-scroll');next.scrollLeft=scrollLeft;next.scrollTop=scrollTop;drawSpectrum();
  }
  async function analyzeSpectrumAudio(){
@@ -1996,7 +2021,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(e.target.dataset.spectrumChart!==undefined){spectrumVisibleCharts.set(e.target.dataset.spectrumChart,e.target.checked);drawSpectrum();}
   updateTonePreview(true);
  }));
- on(root,'input',e=>{const target=e.target;if(target.dataset.spectrumZoom!==undefined){spectrumZoom=Number(target.value);const output=root.querySelector('[data-spectrum-zoom-value]');if(output)output.textContent=`${spectrumZoom} px/s`;drawSpectrum();}if(target.dataset.pan){const bus=target.dataset.pan;audio.setPan(bus,Number(target.value)/100);root.querySelector(`[data-pan-value="${bus}"]`).textContent=Math.round(audio.pans[bus]*100);}if(target.dataset.songEq!==undefined){const i=Number(target.dataset.songEq),eq=[...audio.songFX.eq];eq[i]=Number(target.value);audio.setSongFX({eq});root.querySelector(`[data-eq-value="${i}"]`).textContent=eq[i]+' dB';root.querySelector('[data-song-fx-preset]').value='';}});
+ on(root,'input',e=>{const target=e.target;if(target.dataset.spectrumZoom!==undefined){spectrumZoom=Number(target.value);const output=root.querySelector('[data-spectrum-zoom-value]');if(output)output.textContent=`${spectrumZoom} px/s`;drawSpectrum();}if(target.dataset.spectrumSemitoneHeight!==undefined){spectrumSemitoneHeight=Number(target.value);const output=root.querySelector('[data-spectrum-semitone-value]');if(output)output.textContent=`${spectrumSemitoneHeight} px / semitone`;drawSpectrum();}if(target.dataset.pan){const bus=target.dataset.pan;audio.setPan(bus,Number(target.value)/100);root.querySelector(`[data-pan-value="${bus}"]`).textContent=Math.round(audio.pans[bus]*100);}if(target.dataset.songEq!==undefined){const i=Number(target.dataset.songEq),eq=[...audio.songFX.eq];eq[i]=Number(target.value);audio.setSongFX({eq});root.querySelector(`[data-eq-value="${i}"]`).textContent=eq[i]+' dB';root.querySelector('[data-song-fx-preset]').value='';}});
  on(root,'change',safe(e=>{const target=e.target;if(target.hasAttribute('data-song-fx-bypass'))audio.setSongFX({bypass:target.checked});if(target.hasAttribute('data-song-fx-channel'))audio.setSongFX({channel:target.value});if(target.hasAttribute('data-song-fx-preset')&&target.value){audio.setSongFX({preset:target.value});for(let i=0;i<5;i++){root.querySelector(`[data-song-eq="${i}"]`).value=audio.songFX.eq[i];root.querySelector(`[data-eq-value="${i}"]`).textContent=audio.songFX.eq[i]+' dB';}}}));
  on(root,'input',e=>{if(e.target.dataset.bus){const bus=e.target.dataset.bus;audio.setGain(bus,Number(e.target.value)/100);root.querySelector(`[data-mixer-value="${bus}"]`).textContent=`${Math.round(audio.gains[bus]*100)}%`;for(const output of root.querySelectorAll('[data-mixer-output]'))output.textContent=`${Math.round(audio.getOutputGain(output.dataset.mixerOutput)*100)}%`;if(bus==='master')$('master').value=audio.gains.master*100;}});
  on($('arrangement'),'change',e=>{const target=e.target.value;countIn.cancel();stopMidi();arrangementId=target;selectedZoneIndex=null;selection.clear();selectionRange=null;markerSelection=null;lane=arrangement().type==='keys'?60:0;fitPianoRange();audio.setProject(project(),arrangement());render();});
