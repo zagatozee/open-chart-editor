@@ -48,6 +48,51 @@ export function makeCamera({width, height, center, span, leftHanded = false, zFa
 }
 
 const camera = new WeakMap();
+const stringNoteCache = new WeakMap();
+
+/** Notes on one string, time-sorted, cached per arrangement object (edits produce a new array). */
+function sortedStringNotes(a) {
+ let cached = stringNoteCache.get(a);
+ if (!cached) {
+  cached = new Map();
+  for (const n of a.notes || []) {
+   if (!Number.isFinite(n.time) || !Number.isInteger(n.string)) continue;
+   if (!cached.has(n.string)) cached.set(n.string, []);
+   cached.get(n.string).push(n);
+  }
+  for (const list of cached.values()) list.sort((p, q) => p.time - q.time);
+  stringNoteCache.set(a, cached);
+ }
+ return cached;
+}
+
+/** The note immediately before `note` on the same string; the hammer-on/pull-off source. */
+function previousOnString(a, note) {
+ const list = sortedStringNotes(a).get(note.string);
+ if (!list) return null;
+ let lo = 0, hi = list.length;
+ while (lo < hi) {const mid = (lo + hi) >>> 1; if (list[mid].time < note.time) lo = mid + 1; else hi = mid;}
+ return lo > 0 ? list[lo - 1] : null;
+}
+
+/** A zig-zag through already-projected screen points, offset perpendicular to each segment. */
+function wavyLine(ctx, points, amp, color, width) {
+ if (points.length < 2) return;
+ ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
+ for (let i = 1; i < points.length; i++) {
+  const p0 = points[i - 1], p1 = points[i], dx = p1.x - p0.x, dy = p1.y - p0.y, len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len, a = (i % 2 ? 1 : -1) * amp;
+  ctx.lineTo((p0.x + p1.x) / 2 + nx * a, (p0.y + p1.y) / 2 + ny * a); ctx.lineTo(p1.x, p1.y);
+ }
+ ctx.stroke();
+}
+
+/** Bend amount in semitones as a standard tab fraction of a whole-step ("Full") bend. */
+function bendFraction(semitones) {
+ const steps = Math.max(0, semitones) / 2, whole = Math.floor(steps + 1e-6), frac = steps - whole;
+ const fractionGlyph = frac >= 0.7 ? '¾' : frac >= 0.37 ? '½' : frac >= 0.12 ? '¼' : '';
+ return (whole ? String(whole) : '') + fractionGlyph || '¼';
+}
 
 /**
  * Draw the highway. `view`: {width, height, arrangement, time, playing, options, notes(t0,t1),
@@ -130,8 +175,10 @@ export function drawLiveView(ctx, view) {
  // fret-hand position, as in the game.
  function drawNote(n, inChord, span = null, label = undefined) {
   const z = zOf(n.time), s = n.string, h = y(s), color = view.stringColor(s), past = n.time < time;
-  ctx.globalAlpha = past ? Math.max(0.15, 1 + (n.time - time) / PAST_SECONDS) : 1;
-  const sustainEnd = Math.min(zFar, zOf(n.time + (n.sustain || 0))), t = n.techniques || {};
+  const t = n.techniques || {}, ignored = t.ignore === true;
+  ctx.globalAlpha = (past ? Math.max(0.15, 1 + (n.time - time) / PAST_SECONDS) : 1) * (ignored ? 0.45 : 1);
+  const sustainEnd = Math.min(zFar, zOf(n.time + (n.sustain || 0)));
+  const fretHandMuted = t.mute || t.fret_hand_mute, palmMuted = t.palm_mute && !fretHandMuted;
   if (n.fret === 0) {
    // Open string: a slim bar in the string's colour.
    const anchor = handAt(n.time) || {fret: 1, width: 4}, [x0, x1] = span ? [span[0] + 0.15, span[1] - 0.15] : [anchor.fret - 1 + 0.15, anchor.fret - 1 + (anchor.width || 4) - 0.15];
@@ -141,20 +188,62 @@ export function drawLiveView(ctx, view) {
    line([x0, h, z], [x1, h, z], hexAlpha(color, 0.9), 4); ctx.shadowBlur = 0; line([x0, h, z], [x1, h, z], '#ffffff', 1.2); ctx.restore();
   } else {
    const x = noteX(n.fret), slide = t.slide_to >= 0 ? t.slide_to : t.slide_unpitch_to >= 0 ? t.slide_unpitch_to : null, xEnd = slide !== null && slide > 0 ? slide - 0.5 : x;
+   const bend = Math.max(0, Number(t.bend) || 0), hEnd = h + Math.min(2, bend) * 0.3;
    if (n.sustain > 0) {
-    const bend = Number(t.bend) || 0, hEnd = h + Math.min(2, bend) * 0.3;
     poly([[x - TAIL_HALF, h, z], [x + TAIL_HALF, h, z], [xEnd + TAIL_HALF, hEnd, sustainEnd], [xEnd - TAIL_HALF, hEnd, sustainEnd]], hexAlpha(color, t.slide_unpitch_to >= 0 ? 0.25 : 0.45));
+    // Vibrato: a wavy overlay along the sustain tail, in screen space so the wiggle stays legible at any depth.
+    if (t.vibrato === true || (typeof t.vibrato === 'number' && t.vibrato > 0)) {
+     const steps = Math.max(4, Math.min(24, Math.round((sustainEnd - z) / 0.5))), pts = [];
+     for (let i = 0; i <= steps; i++) {const f = i / steps, p = project(x + (xEnd - x) * f, h + (hEnd - h) * f, z + (sustainEnd - z) * f); if (!p) {pts.length = 0; break;} pts.push(p);}
+     wavyLine(ctx, pts, 2.5, '#ffe2a8', 1.5);
+    }
+    // Tremolo picking: short cross-ticks along the tail, as in standard tab notation.
+    if (t.tremolo === true || (typeof t.tremolo === 'number' && t.tremolo > 0)) {
+     const ticks = Math.max(2, Math.min(10, Math.round((sustainEnd - z) / 1.2)));
+     for (let i = 1; i <= ticks; i++) {
+      const f = i / (ticks + 1), zz = z + (sustainEnd - z) * f, xx = x + (xEnd - x) * f, hh = h + (hEnd - h) * f;
+      const p = project(xx, hh, zz); if (!p) continue;
+      ctx.strokeStyle = '#ffe2a8'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(p.x - 4 * p.scale * 0.02 - 2, p.y + 3); ctx.lineTo(p.x + 4 * p.scale * 0.02 + 2, p.y - 3); ctx.stroke();
+     }
+    }
+   }
+   // Hammer-on / pull-off: an arc from the previous note on this string, the way a slur reads
+   // in standard tab, rather than a bare floating letter the player has to decode alone.
+   if (!inChord && (t.hammer_on || t.pull_off)) {
+    const prev = previousOnString(a, n);
+    if (prev && prev.fret !== n.fret) {
+     const p0 = project(noteX(prev.fret) ?? 0, y(prev.string), zOf(prev.time)), p1 = project(x, h, z);
+     if (p0 && p1) {
+      const midX = (p0.x + p1.x) / 2, apex = Math.min(p0.y, p1.y) - Math.max(7, Math.abs(p1.x - p0.x) * 0.2);
+      ctx.strokeStyle = t.hammer_on ? '#8fe3a8' : '#ffb199'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y); ctx.quadraticCurveTo(midX, apex, p1.x, p1.y); ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(t.hammer_on ? 'H' : 'P', midX, apex - 2);
+     }
+    }
    }
    if (!inChord) line([x, h, z], [x, 0, z], hexAlpha(color, 0.35), 1);
-   const drawn = poly([[x - NOTE_HALF, h - GEM_HALF_H, z], [x + NOTE_HALF, h - GEM_HALF_H, z], [x + NOTE_HALF, h + GEM_HALF_H, z], [x - NOTE_HALF, h + GEM_HALF_H, z]],
-    t.mute || t.fret_hand_mute ? '#2a2d36' : color, past ? '#ffffff' : '#0b0d12', 1.5);
+   // Natural/pinch harmonics get a diamond gem instead of a square one, as in printed tab.
+   const harmonic = t.harmonic || t.harmonic_pinch;
+   const square = [[x - NOTE_HALF, h - GEM_HALF_H, z], [x + NOTE_HALF, h - GEM_HALF_H, z], [x + NOTE_HALF, h + GEM_HALF_H, z], [x - NOTE_HALF, h + GEM_HALF_H, z]];
+   const diamond = [[x, h - GEM_HALF_H - 0.1, z], [x + NOTE_HALF, h, z], [x, h + GEM_HALF_H + 0.1, z], [x - NOTE_HALF, h, z]];
+   // Palm-muted notes keep their pitch legible (unlike a fret-hand mute's blank "X"), but a
+   // dashed rather than solid outline marks them as muffled, matching the "dotted/ghosted" look
+   // printed tab uses for palm mutes.
+   if (ignored || palmMuted) ctx.setLineDash(ignored ? [3, 2] : [4, 2]);
+   const drawn = poly(harmonic ? diamond : square, fretHandMuted ? '#2a2d36' : palmMuted ? hexAlpha(color, 0.55) : color, past ? '#ffffff' : '#0b0d12', 1.5);
+   ctx.setLineDash([]);
    const p = drawn && project(x, h, z);
    if (p && p.scale > 45) {
-    ctx.fillStyle = t.mute || t.fret_hand_mute ? '#e6e8ee' : '#0b0d12'; ctx.font = `bold ${Math.round(Math.max(9, Math.min(18, p.scale * 0.24)))}px system-ui, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const text = t.mute || t.fret_hand_mute ? 'X' : label !== undefined ? label : String(view.shownFret(n.fret));
+    ctx.fillStyle = fretHandMuted ? '#e6e8ee' : '#0b0d12'; ctx.font = `bold ${Math.round(Math.max(9, Math.min(18, p.scale * 0.24)))}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const text = fretHandMuted ? 'X' : label !== undefined ? label : String(view.shownFret(n.fret));
     if (text) ctx.fillText(text, p.x, p.y + 1);
-    const tags = view.techniqueTags(n).filter(tag => tag !== 'FM');
+    // Slap/pop (bass) get a small corner glyph on the gem itself, in addition to the text tag below.
+    if (t.slap) {ctx.fillStyle = '#0b0d12'; ctx.font = `bold ${Math.round(Math.max(7, p.scale * 0.14))}px system-ui, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('▲', p.x + p.scale * NOTE_HALF, p.y - p.scale * GEM_HALF_H);}
+    if (t.pluck) {ctx.fillStyle = '#0b0d12'; ctx.font = `bold ${Math.round(Math.max(7, p.scale * 0.14))}px system-ui, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('●', p.x + p.scale * NOTE_HALF, p.y - p.scale * GEM_HALF_H);}
+    const tags = view.techniqueTags(n).filter(tag => !['FM', 'H', 'P'].includes(tag));
     if (tags.length && p.scale > 80) {ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#ffe2a8'; ctx.fillText(tags.join(' '), p.x, p.y - p.scale * GEM_HALF_H - 8);}
+    if (bend > 0 && p.scale > 60) {ctx.fillStyle = '#ffd27a'; ctx.font = `bold ${Math.round(Math.max(8, Math.min(12, p.scale * 0.14)))}px system-ui, sans-serif`; ctx.fillText('↑' + bendFraction(bend), p.x, p.y - p.scale * GEM_HALF_H - (tags.length ? 20 : 8));}
    }
   }
   ctx.globalAlpha = 1;
