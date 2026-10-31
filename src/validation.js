@@ -42,6 +42,10 @@ export function findChartIssues(project, options = {}) {
   const epsilon = finite(options.epsilon) && options.epsilon >= 0 ? options.epsilon : 0.001;
   // Chart XML stores times to the millisecond; a linked note and its target can each round by half of that.
   const linkTolerance = Math.max(epsilon, 0.002);
+  // Times this far apart (song-length subtractions) carry float64 rounding noise around 1e-13;
+  // a chart whose bend point or linked sustain lands exactly on the epsilon boundary by design
+  // must not flip to an error/warning purely on which side of that noise the subtraction landed.
+  const floatNoise = 1e-9;
   const maxFret = Number.isInteger(options.maxFret) && options.maxFret > 0 ? options.maxFret : 24;
   const issues = [];
   let arrangement = null;
@@ -185,7 +189,7 @@ export function findChartIssues(project, options = {}) {
         let previous = -Infinity;
         for (const [pointIndex, point] of list(curve).entries()) {
           const relative = point?.t ?? point?.time, value = point?.v ?? point?.step;
-          if (!finite(relative) || relative < -epsilon || (finite(sustain) && relative > sustain + epsilon)) emit('bend.pointTime', 'Bend point lies outside the note sustain.', {item: note, path: `${location}.bend[${pointIndex}]`, time});
+          if (!finite(relative) || relative < -epsilon || (finite(sustain) && relative > sustain + epsilon + floatNoise)) emit('bend.pointTime', 'Bend point lies outside the note sustain.', {item: note, path: `${location}.bend[${pointIndex}]`, time});
           if (!finite(value) || value < 0) emit('bend.pointValue', 'Bend point value must be finite and non-negative.', {item: note, path: `${location}.bend[${pointIndex}]`, time});
           if (finite(relative) && relative <= previous) emit('bend.pointOrder', 'Bend points must have strictly increasing relative times.', {item: note, path: `${location}.bend[${pointIndex}]`, time});
           if (finite(relative)) previous = relative;
@@ -222,7 +226,7 @@ export function findChartIssues(project, options = {}) {
         for (let index = 0; index < lane.length; index++) {
           const event = lane[index], next = lane[index + 1], previous = lane[index - 1];
           if (previous && Math.abs(event.time - previous.time) <= epsilon) emit('note.duplicate', 'Two events occupy the same lane/pitch and time.', {item: event.note, path: event.path, time: event.time, related: [previous.note.id].filter(Boolean)});
-          else if (a.type !== 'drums' && active && active.time + active.sustain > event.time + epsilon) emit('sustain.overlap', 'A sustain crosses a later note on the same string or pitch.', {item: event.note, path: event.path, time: event.time, severity: 'warning', related: [active.note.id].filter(Boolean)});
+          else if (a.type !== 'drums' && active && active.time + active.sustain > event.time + epsilon + floatNoise) emit('sustain.overlap', 'A sustain crosses a later note on the same string or pitch.', {item: event.note, path: event.path, time: event.time, severity: 'warning', related: [active.note.id].filter(Boolean)});
           if (getTechnique(event.note, 'link_next', 'linkNext', 'ln') && (!next || Math.abs(event.time + event.sustain - next.time) > linkTolerance)) emit('link.disconnected', 'Link-next does not reach the next event on this lane.', {item: event.note, path: event.path, time: event.time, severity: 'warning'});
           if (!active || event.time + event.sustain >= active.time + active.sustain) active = event;
         }

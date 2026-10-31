@@ -41,6 +41,15 @@ test('sustain overlap tracks furthest tail, includes chords, allows other string
   a.chords=[{time:1.5,chord_id:0,sustain:1}];assert.ok(issuesWith(p,'sustain.overlap').length>0);
 });
 
+test('a sustain joined exactly at the epsilon boundary is not flagged merely because of float64 subtraction noise',()=>{
+  // Reproduces a real Rocksmith+ "Spark in the Dark" UGC Lead chart: a linked slide's sustain
+  // and the next note's time are each subtracted from absolute song-position floats, so the
+  // join lands a few ULP past the nominal 1ms tolerance depending on which way that noise falls.
+  const p=chart(),a=p.arrangements[0];
+  a.notes=[note('slide',32.814,1,3,0.112,{slide_to:2,link_next:true}),note('landed',32.925,1,2,0.112,{slide_to:3,link_next:true}),note('next',33.037,1,3,0)];
+  assert.equal(issuesWith(p,'sustain.overlap').length,0);
+});
+
 test('same-onset duplicate is found even beneath an earlier longer sustain',()=>{
   const p=chart();p.arrangements[0].notes=[note('long',0,0,3,10),note('a',1),note('b',1)];
   assert.deepEqual(issuesWith(p,'note.duplicate').map(x=>x.note),['b']);
@@ -52,6 +61,15 @@ test('curve times are relative, ordered and within tails, with independent value
   const result=new Set(codes(p));for(const code of ['bend.openString','bend.pointOrder','bend.pointTime','bend.pointValue'])assert.ok(result.has(code),code);
   p.arrangements[0].notes=[note('valid-bend',10,0,5,1,{bn:1,bnv:[{t:0,v:0},{t:1,v:1}]})];
   assert.deepEqual(findChartIssues(p),[]);
+});
+
+test('a bend point at the epsilon boundary is not flagged merely because of float64 subtraction noise',()=>{
+  // Reproduces a real Rocksmith+ "Spark in the Dark" UGC Lead chart: the bend value's absolute
+  // XML time minus the note's absolute XML time lands a few ULP past sustain+1ms, not because
+  // the point is genuinely outside the sustain but because both are float64 subtractions of
+  // large song-position values (~135s), which carries noise far smaller than the 1ms tolerance.
+  const p=chart();p.arrangements[0].notes=[note('bend',135.771,0,11,0.884,{bend:1,bend_values:[{t:136.656-135.771,v:2}]})];
+  assert.equal(issuesWith(p,'bend.pointTime').length,0);
 });
 
 test('slides retain zero destinations and distinguish disabled -1 from invalid values',()=>{
