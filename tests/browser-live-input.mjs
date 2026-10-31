@@ -9,7 +9,7 @@ const context=await browser.newContext({viewport:{width:1700,height:1050}});awai
 });
 const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));let report;
 try{
- await page.goto('http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');assert.equal(await page.evaluate(()=>window.__requests.length),0);
+ await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');assert.equal(await page.evaluate(()=>window.__requests.length),0);
  await page.locator('[data-action="mixer"]').first().evaluate(el=>el.click());
  async function start(){await page.locator('[data-action="live-input"]').click();await page.locator('#ws-dialog[open]').waitFor();assert.ok((await page.locator('#ws-dialog').textContent()).includes('headphones'));await page.locator('#ws-dialog-submit').click();await page.waitForFunction(()=>document.querySelector('.ws-live-input span')?.textContent.startsWith('Monitoring:'));}
  await start();assert.equal(await page.evaluate(()=>window.__requests.length),1);assert.equal(await page.evaluate(()=>window.__requests[0].audio.echoCancellation),false);assert.equal(await page.evaluate(()=>window.__inputs[0].getAudioTracks()[0].readyState),'live');

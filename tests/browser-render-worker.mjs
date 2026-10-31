@@ -6,7 +6,7 @@ async function submit(){const closed=page.locator('#ws-dialog').evaluate(el=>new
 async function load(p){await page.locator('#ws-open-file').setInputFiles({name:'original-worker.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(p))});if(await page.locator('#ws-dialog[open]').count()&&await page.locator('#ws-dialog-title').textContent()==='Replace unsaved project?')await submit();await page.waitForFunction(title=>document.querySelector('#ws-title').textContent.includes(title),p.title);}
 try{
  await page.addInitScript(()=>{Object.defineProperty(window,'showSaveFilePicker',{value:undefined,configurable:true});window.__renderWorkers=new Set();const OriginalWorker=window.Worker;window.Worker=class extends OriginalWorker{constructor(...args){super(...args);window.__renderWorkers.add(this);}terminate(){window.__renderWorkers.delete(this);return super.terminate();}};});
- await page.goto('http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
+ await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
  const result=await page.evaluate(async()=>{
   const {PracticeRenderer,practiceDTO}=await import('/api/plugins/open_chart_editor/src/render-controller.js'),{renderGuide}=await import('/api/plugins/open_chart_editor/src/render-guide.js'),{makeProject,makeNote}=await import('/api/plugins/open_chart_editor/src/model.js');
   const p=makeProject();p.duration=600;p.arrangements[0].notes=Array.from({length:30000},(_,i)=>makeNote(p.arrangements[0],i*.02,i%6,i%20,.12));p._pack={opaque:'private source'};p.audio={original:'do not clone or alter'};const before=JSON.stringify(p),r=new PracticeRenderer();

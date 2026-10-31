@@ -1,6 +1,6 @@
 import {createRequire} from 'node:module';import {writeFile} from 'node:fs/promises';import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{chromium}=require('C:/Users/zagat/AppData/Roaming/npm/node_modules/rea-agents/node_modules/playwright-core');const browser=await chromium.launch({headless:true,executablePath:'C:/Users/zagat/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe'}),page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));let report;
-try{await page.goto('http://127.0.0.1:8766');const result=await page.evaluate(async()=>{
+try{await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');const result=await page.evaluate(async()=>{
  const {renderStretchCandidate}=await import('/api/plugins/open_chart_editor/src/stretch-candidate.js'),{AudioEngine}=await import('/api/plugins/open_chart_editor/src/audio.js');
  const rate=48000,duration=2,frames=rate*duration;
  const frequencies={mixed:[440,613],guitar:[82.4069,164.8138,247.2207,329.6276],bass:[30.8677,61.7354,92.6031]},rms=(data,start=.3,end=1.7)=>{let sum=0,count=0;for(let i=Math.ceil(start*rate);i<Math.floor(end*rate);i++){sum+=data[i]**2;count++;}return Math.sqrt(sum/count);};

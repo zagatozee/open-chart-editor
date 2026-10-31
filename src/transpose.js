@@ -3,9 +3,9 @@ import {clone,notePitch,synchronizeChordVoicings} from './model.js';
 import {validCapo} from './fret-display.js';
 const bounded=(value,min,max,label)=>{if(!Number.isInteger(value)||value<min||value>max)throw Error(`${label} must remain between ${min} and ${max}; transpose was not applied`);return value;};
 export function transposeSelection(arrangement,selectedIds,semitones){
+ if(arrangement.type==='drums')throw Error('Drum hits cannot be transposed; choose a different kit piece instead');
  const ids=new Set(selectedIds);if(!ids.size)throw Error('Select one or more notes to transpose');
  if(!Number.isSafeInteger(semitones))throw Error('Transpose must use a whole number of semitones');
- if(arrangement.type==='drums')throw Error('Drum hits cannot be transposed; choose a different kit piece instead');
  if(!['keys','guitar','bass'].includes(arrangement.type))throw Error('This instrument has no supported pitch mapping for transposition');
  const notes=[...arrangement.notes||[],...(arrangement.chords||[]).flatMap(c=>c.notes||[])],chosen=notes.filter(n=>ids.has(n.id));
  if(chosen.length!==ids.size||new Set(chosen.map(n=>n.id)).size!==chosen.length)throw Error('Transpose selection contains missing or ambiguous note IDs');

@@ -6,7 +6,7 @@ const browser=await chromium.launch({headless:true,executablePath:'C:/Users/zaga
 const page=await browser.newPage({viewport:{width:1700,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
 let report;
 try{
- await page.goto('http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
+ await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
  const dsp=await page.evaluate(async()=>{
   const {AudioEngine}=await import('/api/plugins/open_chart_editor/src/audio.js');
   async function render({channel='stereo',eq=[0,0,0,0,0],bypass=false,pan=0,left=.4,right=.4,frequency=100,mono=false}={}){

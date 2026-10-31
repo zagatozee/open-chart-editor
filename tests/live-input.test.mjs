@@ -9,6 +9,7 @@ function harness(){
  const effect={input:{},connect:()=>events.push('effect-connect'),dispose:()=>events.push('effect-dispose')};
  const monitor=new LiveInput({audio,mediaDevices,createEffect:()=>effect});return {audio,monitor,mediaDevices,stream,tracks,events,get constraints(){return constraints;}};
 }
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
 test('live monitor is permission-free until start and selects local unprocessed input',async()=>{
  const h=harness();assert.deepEqual(h.events,[]);assert.deepEqual(await h.monitor.listDevices(),[{id:'guitar',label:'Guitar'}]);assert.equal(h.constraints,undefined);
  await h.monitor.start('guitar');assert.equal(h.monitor.active,true);assert.deepEqual(h.constraints,{audio:{deviceId:{exact:'guitar'},echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:{ideal:1}},video:false});assert.equal(h.monitor.label,'Original fake guitar input');assert.ok(h.events.includes('effect-connect'));
@@ -16,7 +17,7 @@ test('live monitor is permission-free until start and selects local unprocessed 
 });
 test('cancelled permission and newer selections stop stale streams before connecting',async()=>{
  const h=harness(),pending=[];h.mediaDevices.getUserMedia=()=>new Promise(resolve=>pending.push(resolve));
- const first=h.monitor.start();await Promise.resolve();h.monitor.stop();const second=h.monitor.start('guitar');await Promise.resolve();const latest=h.stream();pending[1](latest);await second;const old=h.stream();pending[0](old);assert.equal((await first).stale,true);assert.equal(h.tracks[1].stopped,true);assert.equal(h.tracks[0].stopped,false);assert.equal(h.monitor.stream,latest);assert.equal(h.events.filter(e=>e==='connect').length,1);
+ const first=h.monitor.start();await flush();h.monitor.stop();const second=h.monitor.start('guitar');await flush();const latest=h.stream();pending[1](latest);await second;const old=h.stream();pending[0](old);assert.equal((await first).stale,true);assert.equal(h.tracks[1].stopped,true);assert.equal(h.tracks[0].stopped,false);assert.equal(h.monitor.stream,latest);assert.equal(h.events.filter(e=>e==='connect').length,1);
 });
 test('input ending and engine disposal release tracks and preview graph',async()=>{
  const h=harness();await h.monitor.start();h.tracks[0].ended();assert.equal(h.monitor.active,false);assert.equal(h.tracks[0].stopped,true);await h.monitor.start();for(const dispose of h.audio.disposers)dispose();assert.equal(h.tracks[1].stopped,true);assert.equal(h.monitor.active,false);h.monitor.dispose();assert.equal(h.audio.disposers.size,0);
@@ -26,12 +27,21 @@ test('rejected permission and cancelled audio resume never leave input running',
  let resume;h.audio.init=()=>new Promise(resolve=>{resume=resolve;});const pending=h.monitor.start();h.monitor.stop();resume();assert.equal((await pending).stale,true);assert.equal(h.tracks.length,0);
 });
 
-test('explicit async effect preparation finishes before requesting input or constructing its graph',async()=>{
+test('tone engine preparation finishes before requesting input or constructing its graph',async()=>{
  const h=harness(),order=[];let complete;
  h.monitor.prepareEffect=context=>{assert.equal(context,h.audio.context);order.push('prepare');return new Promise(resolve=>complete=()=>{order.push('ready');resolve();});};
  const get=h.mediaDevices.getUserMedia;h.mediaDevices.getUserMedia=async value=>{order.push('input');return get(value);};
  const create=h.monitor.createEffect;h.monitor.createEffect=context=>{order.push('effect');return create(context);};
- const pending=h.monitor.start();await Promise.resolve();assert.deepEqual(order,['prepare']);assert.equal(h.constraints,undefined);assert.equal(h.monitor.pending,true);complete();await pending;assert.deepEqual(order,['prepare','ready','input','effect']);h.monitor.dispose();assert.equal(h.tracks[0].stopped,true);
+ const pending=h.monitor.start();await Promise.resolve();assert.deepEqual(order,['prepare']);assert.equal(h.constraints,undefined);assert.equal(h.monitor.pending,true);complete();await pending;assert.deepEqual(order,['prepare','ready','effect','input']);h.monitor.dispose();assert.equal(h.tracks[0].stopped,true);
+});
+
+test('cancel while the native host is loading aborts it before requesting input',async()=>{
+ const h=harness(),order=[];let finish,disposed=0;
+ h.monitor.createEffect=(_context,{signal})=>new Promise((resolve,reject)=>{
+  order.push('host-start');signal.addEventListener('abort',()=>{order.push('host-abort');reject(new DOMException('cancelled','AbortError'));},{once:true});
+  finish=()=>resolve({input:{},connect(){},dispose(){disposed++;}});
+ });
+ const pending=h.monitor.start('',{engine:'at5-vst3'});await Promise.resolve();await Promise.resolve();h.monitor.stop();finish();assert.equal((await pending).stale,true);assert.deepEqual(order,['host-start','host-abort']);assert.equal(h.constraints,undefined);assert.equal(h.tracks.length,0);assert.equal(disposed,0);
 });
 
 test('cancel during effect preparation never acquires input, even when preparation later succeeds or fails',async()=>{
@@ -59,7 +69,7 @@ test('terminal disposal during effect preparation suppresses late success and fa
  for(const rejectLate of [false,true]){const h=harness();terminalAudio(h);let complete;h.monitor.prepareEffect=()=>new Promise((resolve,reject)=>complete=()=>rejectLate?reject(Error('Late module failure')):resolve());const pending=h.monitor.start();await Promise.resolve();await h.audio.dispose();complete();assert.equal((await pending).stale,true);assert.equal(h.audio.context,null);assert.equal(h.tracks.length,0);assert.equal(h.constraints,undefined);assert.equal(h.monitor.disposed,true);}
 });
 test('terminal disposal while capture is pending stops the late stream before any graph is attached',async()=>{
- const h=harness();terminalAudio(h);let complete;h.mediaDevices.getUserMedia=()=>new Promise(resolve=>complete=resolve);const pending=h.monitor.start();await Promise.resolve();await h.audio.dispose();const stream=h.stream();complete(stream);assert.equal((await pending).stale,true);assert.equal(h.tracks[0].stopped,true);assert.equal(h.monitor.stream,null);assert.equal(h.monitor.source,null);assert.equal(h.monitor.effect,null);assert.equal(h.audio.context,null);assert.equal(h.events.includes('connect'),false);
+ const h=harness();terminalAudio(h);let complete;h.mediaDevices.getUserMedia=()=>new Promise(resolve=>complete=resolve);const pending=h.monitor.start();await flush();await h.audio.dispose();const stream=h.stream();complete(stream);assert.equal((await pending).stale,true);assert.equal(h.tracks[0].stopped,true);assert.equal(h.monitor.stream,null);assert.equal(h.monitor.source,null);assert.equal(h.monitor.effect,null);assert.equal(h.audio.context,null);assert.equal(h.events.includes('connect'),false);
 });
 test('overlapping stale requests share terminal context cleanup and idempotent disposal',async()=>{
  const h=harness();terminalAudio(h);let closeCount=0,finishClose;h.audio.context.close=()=>{closeCount++;return new Promise(resolve=>finishClose=resolve);};const pending=[];h.audio.init=()=>new Promise(resolve=>pending.push(resolve));const first=h.monitor.start(),second=h.monitor.start();h.monitor.dispose();h.monitor.dispose();pending[0]();pending[1]();await Promise.resolve();await Promise.resolve();assert.equal(closeCount,1);finishClose();assert.equal((await first).stale,true);assert.equal((await second).stale,true);assert.equal(h.audio.context,null);assert.equal(h.audio.disposeCalls,1);assert.equal(h.tracks.length,0);

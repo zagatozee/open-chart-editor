@@ -1,6 +1,6 @@
 import {createRequire} from 'node:module';import {writeFile} from 'node:fs/promises';import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{chromium}=require('C:/Users/zagat/AppData/Roaming/npm/node_modules/rea-agents/node_modules/playwright-core');const browser=await chromium.launch({headless:true,executablePath:'C:/Users/zagat/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe'}),page=await browser.newPage();let report;
-try{await page.goto('http://127.0.0.1:8766');const cases=await page.evaluate(async()=>{
+try{await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');const cases=await page.evaluate(async()=>{
  const {TonePreview,createTone,setGear,setKnob,registerGearCatalog,toneAuditionPlan}=await import('/api/plugins/open_chart_editor/src/tone-rack.js');registerGearCatalog((await(await fetch('/api/plugins/open_chart_editor/assets/tone-rack-data.json')).json()).gears);const rate=24000,tone=createTone('Own maximum feedback fixture');tone.volume=12;
  for(const prefix of ['PrePedal','PostPedal','Rack'])for(let i=1;i<=4;i++){const slot=prefix+i,key=prefix==='Rack'?'Rack_StudioDelay':'Pedal_AnalogueDelay';setGear(tone,slot,key);for(const [suffix,value]of Object.entries(prefix==='Rack'?{TimeL:20,TimeR:20,Feedback:100,Mix:100}:{Time:20,Feedback:100,Mix:100}))setKnob(tone,slot,`${key}_${suffix}`,value);}
  const before=JSON.stringify(tone),results=[];

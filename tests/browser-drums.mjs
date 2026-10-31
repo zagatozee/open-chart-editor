@@ -1,6 +1,6 @@
 import {createRequire} from 'node:module';import {writeFile} from 'node:fs/promises';import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{chromium}=require('C:/Users/zagat/AppData/Roaming/npm/node_modules/rea-agents/node_modules/playwright-core');const browser=await chromium.launch({headless:true,executablePath:'C:/Users/zagat/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe'}),page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));let report;
-try{await page.goto('http://127.0.0.1:8766');const result=await page.evaluate(async()=>{
+try{await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');const result=await page.evaluate(async()=>{
  const {AudioEngine}=await import('/api/plugins/open_chart_editor/src/audio.js'),{renderGuide}=await import('/api/plugins/open_chart_editor/src/render-guide.js'),{PracticeRenderer}=await import('/api/plugins/open_chart_editor/src/render-controller.js'),{DRUMS}=await import('/api/plugins/open_chart_editor/src/model.js');
  const own=notes=>({duration:2,beats:[],audio:{original:'unchanged original backing'},arrangements:[{type:'drums',notes,chords:[]}]}),rms=(samples,start,end)=>{let sum=0,count=0;for(let i=Math.ceil(start*48000);i<Math.floor(end*48000);i++){sum+=samples[i]**2;count++;}return Math.sqrt(sum/count);};
  async function real(p,{from=0,speed=1,loop=null,split=false,pause=false,direct=null}={}){

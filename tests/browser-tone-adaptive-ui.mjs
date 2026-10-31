@@ -23,7 +23,7 @@ async function fresh(mode,title){
    p.gum.push(structuredClone(constraints));const context=p.engine?.context;if(!context)throw Error('No prepared editor context');const oscillator=context.createOscillator(),destination=context.createMediaStreamDestination();oscillator.frequency.value=220;oscillator.connect(destination);oscillator.start();const stream=destination.stream;for(const track of stream.getTracks()){const stop=track.stop.bind(track);track.stop=()=>{p.stoppedTracks++;try{oscillator.stop();oscillator.disconnect();destination.disconnect();}catch{}stop();};}return stream;
   }},configurable:true});
  },{mode});
- const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push({title,message:e.message}));await page.goto('http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
+ const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push({title,message:e.message}));await page.goto(process.env.OCE_URL||'http://127.0.0.1:8766');await page.waitForSelector('#ws-app[data-mounted="true"]');
  await page.evaluate(async()=>{
   const base='/api/plugins/open_chart_editor/src/',{TonePreview}=await import(base+'tone-rack.js'),{AudioEngine}=await import(base+'audio.js');const p=window.__adaptiveUI;p.previews=[];p.playCalls=0;
   const set=TonePreview.prototype.setTone,init=AudioEngine.prototype.init,play=AudioEngine.prototype.play;
