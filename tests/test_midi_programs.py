@@ -64,11 +64,18 @@ class MidiProgramTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(archive)) as z:raw=json.loads(z.read(doc['arrangements'][0]['native']['entry']))
         raw['notes'][0]['f']=1
         restored=p.load_project(rewrite(archive,doc['arrangements'][0]['native']['entry'],json.dumps(raw).encode()),'own.feedpak');self.assertNotIn('midiProgramIntent',restored['arrangements'][0]);self.assertEqual(m.source_bytes(restored),own_midi())
-        # Changing only the manifest rig reference or entry tone override must also invalidate the owned authoring binding.
+        # Changing only the manifest rig reference must also invalidate the owned authoring binding.
         changed=copy.deepcopy(manifest);changed['rigs']=doc['arrangements'][0]['native']['entry']
         with self.assertRaises(p.ProjectError):p.load_project(rewrite(archive,'manifest.yaml',p.yaml.safe_dump(changed).encode()),'own.feedpak')
+        # An entry tone override pointing at an unresolved rig id is lenient at the contract level
+        # (FeedPak §4): the pack still opens, with a warning, rather than being refused outright.
+        # The owned MIDI authoring binding is still correctly withheld, since the entry no longer
+        # hashes to what store() originally wrote.
         changed=copy.deepcopy(manifest);changed['arrangements'][0]['tones']={'base':'Different source','base_rig':'different'}
-        with self.assertRaises(p.ProjectError):p.load_project(rewrite(archive,'manifest.yaml',p.yaml.safe_dump(changed).encode()),'own.feedpak')
+        restored=p.load_project(rewrite(archive,'manifest.yaml',p.yaml.safe_dump(changed).encode()),'own.feedpak')
+        self.assertNotIn('midiProgramIntent',restored['arrangements'][0])
+        self.assertEqual(restored['arrangements'][0]['tones']['base_rig'],'different')
+        self.assertTrue(any('missing rig id' in w for w in restored['import_warnings']))
 
     def test_invalid_canonical_ref_and_reserved_collision_are_transactional(self):
         project=backing(p.load_project(own_midi(),'own.mid'));project['_pack']['entries'][m.PATH]=base64.b64encode(b'{"unrelated":true}').decode();before=copy.deepcopy(project)

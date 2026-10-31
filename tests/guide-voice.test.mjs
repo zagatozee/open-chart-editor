@@ -25,11 +25,18 @@ test('arbitrary instrument names never imply a guessed timbre; explicit per-part
  assert.equal(resolveGuideVoice({type:'bass'}).program,32);assert.equal(resolveGuideVoice({type:'guitar'}).program,24);
  const future={type:'keys',guideVoice:{version:2,family:'future',opaque:{retain:1}}},original=structuredClone(future);assert.equal(resolveGuideVoice(future).silent,true);assert.deepEqual(future,original);
 });
-test('tone timeline accepts native t and model time with stable ties and resolves unbound legacy switches explicitly',()=>{
+test('tone timeline accepts native t and model time with stable ties, and a change with no rig field keeps the rig already in effect',()=>{
  const tones={base_rig:'a',changes:[{t:3,name:'C',rig:'c'},{time:1,name:'B',rig:'b'},{time:3,name:'D',rig:'d'},{t:4,name:'Legacy'},{t:NaN,rig:'bad'}]},before=structuredClone(tones);
- assert.equal(guideRigAt(tones,0).rig,'a');assert.equal(guideRigAt(tones,1).rig,'b');assert.equal(guideRigAt(tones,3).rig,'d');assert.equal(guideRigAt(tones,4).rig,null);assert.equal(guideRigAt(tones,0).warnings.length,1);assert.deepEqual(tones,before);
+ assert.equal(guideRigAt(tones,0).rig,'a');assert.equal(guideRigAt(tones,1).rig,'b');assert.equal(guideRigAt(tones,3).rig,'d');
+ // The change at t:4 has no `rig` field at all (an OCE-native tone edit, not a rig binding) —
+ // matching FeedBack core's soundTimeline.rigAt, that keeps the rig already in effect ('d').
+ assert.equal(guideRigAt(tones,4).rig,'d');assert.equal(guideRigAt(tones,0).warnings.length,1);assert.deepEqual(tones,before);
  assert.throws(()=>guideRigAt(tones,-1));
  const interleaved={base_rig:'a',changes:[{t:3,rig:'c'},{t:NaN},{t:1,rig:'b'}]};assert.equal(guideRigAt(interleaved,3).rig,'c');
+ // An explicit empty-string rig, unlike an absent field, deliberately clears the binding.
+ const cleared={base_rig:'a',changes:[{t:2,rig:''}]};assert.equal(guideRigAt(cleared,2).rig,null);assert.equal(guideRigAt(cleared,2).unboundChange,true);
+ // At t:4 the carried-forward rig 'd' is still unresolved with no rigLibrary passed, so the
+ // guide is silent for a different reason now (rig not found) rather than having no rig at all.
  assert.equal(resolveGuideVoice({type:'keys',tones},{time:4}).silent,true);
 });
 test('native source bypass is author mute, not fallback even with valid GM or unsupported realizations',()=>{
@@ -55,12 +62,15 @@ test('portable adapter returns a new source rig with explicit GM and no local au
  assert.deepEqual(setting,before);assert.equal(rig.id,'own-new-guide');assert.deepEqual(rig.blocks,[{role:'source',intent:{kind:'instrument',family:'strings',gm:{program:42}}}]);assert.equal(rig.realizations,undefined);
  assert.equal(sourceGmIntent(rig).family,'strings');assert.throws(()=>guideVoiceRig(setting,{id:' padded '}));assert.throws(()=>guideVoiceRig({version:2,family:'strings',program:42},{id:'x'}));
 });
-test('legacy RS2014 named tone changes never imply a native source or silence old guide playback',()=>{
+test('legacy RS2014 named tone changes never imply a native source, and keep a bound rig playing instead of going silent',()=>{
  const arrangement={type:'keys',tones:{base:'Clean',changes:[{time:.5,name:'Drive'},{time:1,name:'Clean'}],definitions:{Clean:{opaque:true}}}};
  for(const time of [0,.5,1,2]){const voice=resolveGuideVoice(arrangement,{time});assert.equal(voice.source,'editor-default');assert.equal(voice.legacy,true);assert.equal(voice.profile,null);assert.equal(voice.silent,undefined);assert.deepEqual(voice.warnings,[]);assert.equal(guideVoiceDTO(voice),null);}
  assert.equal(guideVoiceTimelineDTO(arrangement),null);
  arrangement.tones.base_rig='original';const timeline=guideVoiceTimelineDTO(arrangement,{rigLibrary:{rigs:[{...source({program:73}),id:'original'}]}});
- assert.deepEqual(guideVoiceAtTimeline(timeline,0),{version:1,family:'pipe',program:73});assert.deepEqual(guideVoiceAtTimeline(timeline,.5),{version:1,silent:true});
+ // Neither legacy named change at .5 or 1 carries a `rig` field, so (matching FeedBack core)
+ // the rig bound by base_rig keeps playing through both of them instead of the guide going
+ // silent — a single timeline entry covers every time, since the resolved voice never changes.
+ assert.deepEqual(guideVoiceAtTimeline(timeline,0),{version:1,family:'pipe',program:73});assert.deepEqual(guideVoiceAtTimeline(timeline,.5),{version:1,family:'pipe',program:73});assert.deepEqual(guideVoiceAtTimeline(timeline,1),{version:1,family:'pipe',program:73});
 });
 test('resolved minimal timeline follows native GM switches and strips all native opaque state',()=>{
  const a={type:'keys',tones:{base:'Own',base_rig:'a',changes:[{time:.5,rig:'b',name:'New',opaque:'private'}]}};

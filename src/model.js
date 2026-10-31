@@ -16,8 +16,11 @@ export function makeArrangement(type = 'guitar', count = null, {instrument=type}
   if(typeof instrument!=='string'||!instrument.trim()||instrument.length>64)throw Error('Instrument label must contain1 through64 characters');instrument=instrument.trim();
   if(!['guitar','bass','keys','drums'].includes(type)) type='keys';
   count ??= type === 'bass' ? 4 : 6;
+  // An amp/cabinet "Clean" gear chain only makes sense for guitar and bass; keys and drums start
+  // with no tone definitions so their Tones view has nothing to show until the author adds one.
+  const guitarStyle=['guitar','bass'].includes(type);
   return {id:uid(),name:({guitar:'Lead',bass:'Bass',keys:'Piano',drums:'Drums'})[instrument] || instrument,type,instrument,role:type==='bass'?'bass':type==='guitar'?'lead':type,stringCount:count,
-    basePitches:pitches(type,count),tuning:Array(count).fill(0),capo:0,centOffset:0,notes:[],chords:[],chord_templates:[],anchors:[],handshapes:[],phrases:[],toneChanges:[],tones:{base:'Clean',changes:[],definitions:{Clean:createTone('Clean')}}};
+    basePitches:pitches(type,count),tuning:Array(count).fill(0),capo:0,centOffset:0,notes:[],chords:[],chord_templates:[],anchors:[],handshapes:[],phrases:[],toneChanges:[],tones:{base:'Clean',changes:[],definitions:guitarStyle?{Clean:createTone('Clean')}:{}}};
 }
 export function makeProject() {
   return {version:1,title:'Untitled',artist:'Local author',album:'',duration:60,

@@ -873,7 +873,19 @@ def _arrangement(raw, entry, index, drums=False):
     if isinstance(tones,dict):
         tones['changes'] = [{**c,'time':c.get('t',0)} for c in tones.get('changes',[])]
         if isinstance(tones.get('definitions'),list):
-            tones['definitions'] = {str(t.get('name',t.get('id',f'Tone {i}'))):t for i,t in enumerate(tones['definitions'])}
+            # Two definitions sharing a name must not collapse into one on this list->dict
+            # conversion (done for editing convenience); disambiguate instead of losing data.
+            seen={}
+            named={}
+            for i,t in enumerate(tones['definitions']):
+                name=str(t.get('name',t.get('id',f'Tone {i}')))
+                if name in seen:
+                    seen[name]+=1
+                    name=f'{name} ({seen[name]})'
+                else:
+                    seen[name]=1
+                named[name]=t
+            tones['definitions'] = named
         arr['tones'] = tones
     arr['chords'] = [_chord(c,i,keys=kind=='keys') for i,c in enumerate(raw.get('chords',[]))]
     _materialize_chords(arr)
@@ -1050,6 +1062,12 @@ def validate_project(project):
             _check_manifest_tree(arr['guideVoice'])
             if len(_json(arr['guideVoice']))>MAX_GUIDE_VOICE:
                 raise ProjectError('Per-part guide voice metadata exceeds the 64 KiB limit')
+        if arr.get('writeGuideVoiceRig') and not isinstance(arr.get('guideVoice'),dict):
+            raise ProjectError('Binding the guide instrument as a native rig requires an explicit guide voice choice')
+        if 'musicXmlProgramIntent' in arr:
+            intent=arr['musicXmlProgramIntent']
+            if not isinstance(intent,dict) or intent.get('version')!=1 or type(intent.get('program')) is not int or isinstance(intent.get('program'),bool) or not 0<=intent['program']<=127:
+                raise ProjectError('Invalid MusicXML program intent')
         if arr.get('type') in ('guitar','bass') and arr.get('role') not in (None,''):
             arrangement_role(arr)
         if arr.get('priority') not in (None,'','main','alternative','bonus'):
@@ -1630,6 +1648,62 @@ def _grid_index(beats,time):
     return round(i+((time-times[i])/span if span>0 else 0),6)
 
 
+def _guide_voice_source_rig(guide_voice, rig_id, *, bypassed=False):
+    """Mirrors guide-voice.js's own guideVoiceRig() adapter shape: a bare GM source
+    block, no realizations, no local audio implementation referenced."""
+    intent={'kind':'instrument'}
+    if isinstance(guide_voice.get('family'),str) and guide_voice['family']:
+        intent['family']=guide_voice['family']
+    if isinstance(guide_voice.get('program'),int) and 0<=guide_voice['program']<=127:
+        intent['gm']={'program':guide_voice['program']}
+    block={'role':'source','intent':intent}
+    if bypassed:
+        block['bypassed']=True
+    return {'id':rig_id,'blocks':[block]}
+
+
+def _apply_guide_voice_rigs(project, manifest, entries):
+    """Explicit opt-in only (arr['writeGuideVoiceRig']): binds the author's chosen
+    offline guide instrument as a real portable source rig, so FeedBack and other
+    readers play the same GM sound the editor's own guide audition approximates.
+    Without the flag, guideVoice stays an OCE-only editor preview and never
+    touches tones/rigs.json, matching guide-voice.js's documented adapter
+    contract (an override must never silently rewrite source tone bindings)."""
+    bound=[arr for arr in project['arrangements'] if not arr.get('editorOnly') and arr.get('writeGuideVoiceRig') and isinstance(arr.get('guideVoice'),dict)]
+    if not bound:
+        return
+    existing_path=manifest.get('rigs')
+    if isinstance(existing_path,str) and existing_path:
+        name=_path(existing_path)
+        try:
+            library=_decode_json(entries[name]) if name in entries else None
+        except (ValueError,UnicodeError):
+            library=None
+        if not isinstance(library,dict) or not isinstance(library.get('rigs'),list):
+            raise ProjectError('Existing rig library is not a bounded rigs array; cannot add the guide voice rig')
+        library=copy.deepcopy(library)
+    else:
+        name=_path('rigs/oce-guide-rigs.json')
+        library={'version':1,'rigs':[]}
+    existing_ids={rig.get('id') for rig in library['rigs'] if isinstance(rig,dict)}
+    for arr in bound:
+        rig_id=f"oce-guide-{arr['id']}"
+        suffix=1
+        while rig_id in existing_ids:
+            suffix+=1
+            rig_id=f"oce-guide-{arr['id']}-{suffix}"
+        existing_ids.add(rig_id)
+        library['rigs'].append(_guide_voice_source_rig(arr['guideVoice'],rig_id,bypassed=bool(arr.get('guideVoiceMuted'))))
+        if len(library['rigs'])>MAX_MEMBERS:
+            raise ProjectError('Rig library exceeds the bounded rigs array limit')
+        arr['tones']={**(arr.get('tones') or {}),'base_rig':rig_id}
+    content=_json(library)
+    if len(content)>MAX_RIG_LIBRARY:
+        raise ProjectError('Rig library exceeds the eight MiB audition-context limit after adding the guide voice rig')
+    entries[name]=content
+    manifest['rigs']=existing_path if isinstance(existing_path,str) and existing_path else 'rigs/oce-guide-rigs.json'
+
+
 def save_feedpak(project,*,vocal_only=False):
     validate_project(project)
     # Hidden arrangements stay in the project but not in the playable pack: they are
@@ -1652,6 +1726,8 @@ def save_feedpak(project,*,vocal_only=False):
     for arr in project['arrangements']:
         if not arr.get('editorOnly'):
             _validate_zone_styles(arr)
+    if any(not arr.get('editorOnly') and arr.get('writeGuideVoiceRig') and isinstance(arr.get('guideVoice'),dict) for arr in project['arrangements']):
+        project={**project,'arrangements':[copy.deepcopy(arr) if (not arr.get('editorOnly') and arr.get('writeGuideVoiceRig') and isinstance(arr.get('guideVoice'),dict)) else arr for arr in project['arrangements']]}
     pack = project.get('_pack', {})
     manifest = copy.deepcopy(pack.get('manifest', {}))
     entries = {}
@@ -1663,6 +1739,7 @@ def save_feedpak(project,*,vocal_only=False):
         if total > MAX_BYTES or len(entries) >= MAX_MEMBERS:
             raise ProjectError('Project embedded assets exceed the archive size limit')
         entries[name] = content
+    _apply_guide_voice_rigs(project, manifest, entries)
     if 'cover' in project:
         if project['cover'] is None:
             manifest.pop('cover',None)
@@ -1845,29 +1922,37 @@ def save_feedpak(project,*,vocal_only=False):
                     occupied=[l['difficulty'] for l in levels if l['notes'] or l['chords']]
                     phrase['max_difficulty']=max(occupied,default=levels[0]['difficulty'])
                 raw['phrases']=phrases
-            tones = copy.deepcopy(arr.get('tones',project.get('tones')))
-            if isinstance(tones,dict):
-                changes = []
-                own_tempos=bool(arr.get('tempos'))
-                for change in tones.get('changes',[]):
-                    change['t'] = change.pop('time',change.get('t',0))
-                    # FeedPak 1.20: keep an existing beat anchor coherent with t on the saved grid
-                    # (the editor's t is authoritative; tempo edits that move the music move t).
-                    if 'beat' in change:
-                        if own_tempos:change.pop('beat')
-                        else:
-                            beat=_grid_index(project.get('beats',[]),change['t'])
-                            if beat is None:change.pop('beat')
-                            else:change['beat']=beat
-                    changes.append(change)
-                tones['changes'] = changes
-                if isinstance(tones.get('definitions'),dict):
+        # Tone changes apply to drum parts too (a drum rig/kit can change mid-song the same as a
+        # guitar amp), so this is not nested under the guitar/bass/keys branch above.
+        tones = copy.deepcopy(arr.get('tones',project.get('tones')))
+        if isinstance(tones,dict):
+            changes = []
+            own_tempos=bool(arr.get('tempos'))
+            for change in tones.get('changes',[]):
+                change['t'] = change.pop('time',change.get('t',0))
+                # FeedPak 1.20: keep an existing beat anchor coherent with t on the saved grid
+                # (the editor's t is authoritative; tempo edits that move the music move t).
+                if 'beat' in change:
+                    if own_tempos:change.pop('beat')
+                    else:
+                        beat=_grid_index(project.get('beats',[]),change['t'])
+                        if beat is None:change.pop('beat')
+                        else:change['beat']=beat
+                changes.append(change)
+            tones['changes'] = changes
+            if isinstance(tones.get('definitions'),dict):
+                # An empty definitions dict (the normal in-editor default for a part with no
+                # tone library yet) should not fabricate an empty "definitions": [] on a part
+                # that never had one on the wire.
+                if tones['definitions']:
                     tones['definitions'] = [{**definition,'name':name} for name,definition in tones['definitions'].items()]
-                if 'tones' in entry:
-                    entry['tones'] = tones
-                    raw.pop('tones',None)
                 else:
-                    raw['tones'] = tones
+                    tones.pop('definitions',None)
+            if 'tones' in entry:
+                entry['tones'] = tones
+                raw.pop('tones',None)
+            else:
+                raw['tones'] = tones
         entries[_path(filename)] = _json(raw)
         if drums:
             authored=_snapshot_arrangement(original_arr)
@@ -2971,12 +3056,21 @@ def _load_musicxml(data,filename='Untitled.musicxml'):
     if not parts:
         raise ProjectError('MusicXML score contains no parts')
     names={p.get('id'):p.findtext('part-name',p.get('id','Part')) for p in root.findall('./part-list/score-part')}
-    drum_map={}
+    drum_map={};part_programs={}
     for part in root.findall('./part-list/score-part'):
         for instrument in part.findall('midi-instrument'):
             pitch=instrument.findtext('midi-unpitched')
             if pitch:
                 drum_map[(part.get('id'),instrument.get('id'))]=int(pitch)-1
+        # First <midi-instrument><midi-program> is the part's nominal GM voice; MusicXML
+        # numbers it 1-128. A part can carry further per-note instrument assignments (used
+        # above only for unpitched percussion mapping); this stays a single part-level intent,
+        # matching the editor's "never a patch-bank emulator" guide-voice approximation.
+        program=part.findtext('midi-instrument/midi-program')
+        if program is not None and program.strip().lstrip('-').isdigit():
+            value=int(program.strip())-1
+            if 0<=value<=127:
+                part_programs[part.get('id')]=value
     tempo_events=[]; meter_events=[]; arrangements=[]; raw_notes=[]; sections=[]; warnings=set(); dynamics_contexts=[]; dynamics_events=0; end_quarter=Fraction(0)
     for part_index,part in enumerate(parts):
         pid=part.get('id',f'part-{part_index}')
@@ -2990,11 +3084,13 @@ def _load_musicxml(data,filename='Untitled.musicxml'):
             count=int(lines)
         arr=_import_arrangement(f'mxml-{part_index}',name,kind,count)
         arr['sourceInstrument']=name
+        if kind!='drums' and pid in part_programs:
+            arr['sourceProgram']=part_programs[pid]
         fifths=part.findtext('.//attributes/key/fifths')
         if fifths is not None and fifths.strip().lstrip('-').isdigit() and -7<=int(fifths)<=7:
             arr['keySignature']={'fifths':int(fifths),'minor':(part.findtext('.//attributes/key/mode') or '').strip().lower()=='minor'}
         if kind=='keys':
-            arr['instrument']=pitched_instrument(name)
+            arr['instrument']=pitched_instrument(name,part_programs.get(pid))
         arrangements.append(arr)
         dynamics=_musicxml_dynamics.NumericDynamics(pid,kind,event_limit=_musicxml_dynamics.MAX_EVENTS)
         dynamics_contexts.append(dynamics)
@@ -3171,7 +3267,39 @@ def _load_musicxml(data,filename='Untitled.musicxml'):
         arr['notes'].append(note)
     warnings.add('MusicXML layout, notation symbols and engraving are retained in the source; import renders timed notes, hands, basic techniques and the tempo map')
     project={'version':1,'title':root.findtext('./work/work-title') or root.findtext('movement-title') or filename.rsplit('.',1)[0],'artist':root.findtext('./identification/creator',''),'album':'','duration':seconds(end_quarter),'sections':[{'name':name,'number':i+1,'start_time':seconds(q)} for i,(q,name) in enumerate(sections)],'arrangements':arrangements,**timeline,'import_warnings':sorted(warnings),'_import':{'format':'musicxml','source':base64.b64encode(data).decode('ascii')}}
+    _mxl_apply_programs(project)
     return validate_project(project)
+
+
+def _mxl_apply_programs(project):
+    """Bind each part's nominal <midi-program> as an approximate GM source rig,
+    mirroring midi_programs.decorate()'s explicit-fallback contract. MusicXML
+    carries one static program per part rather than MIDI's mid-track program
+    timeline, so (unlike MIDI) no raw per-event provenance needs to be retained
+    for re-validation: once bound, tones.base_rig is ordinary authored chart
+    data, already content-addressed and restored by _mxl_store/_mxl_restore via
+    the single shared score reference. An existing authored tone/guide binding
+    is always left alone.
+    """
+    programs=sorted({arr['sourceProgram'] for arr in project['arrangements'] if 'sourceProgram' in arr})
+    if not programs:return
+    rigs={'version':1,'rigs':[]};rig_by_program={}
+    for program in programs:
+        identifier='oce-mxml-gm-'+str(program);rig_by_program[program]=identifier
+        rigs['rigs'].append({'id':identifier,'name':f'Approximate GM program {program}','blocks':[{'role':'source','intent':{'kind':'instrument','family':_midi_programs.FAMILIES[program//8],'gm':{'program':program}}}]})
+    bound=[]
+    for arr in project['arrangements']:
+        program=arr.get('sourceProgram')
+        if program is None or arr.get('tones') or 'guideVoice' in arr:continue
+        arr['tones']={'base':f'Approximate GM program {program}','base_rig':rig_by_program[program],'changes':[]}
+        arr['musicXmlProgramIntent']={'version':1,'program':program}
+        bound.append(arr['id'])
+    if not bound:return
+    content=_json(rigs)
+    pack=project.setdefault('_pack',{});entries=pack.setdefault('entries',{});manifest=pack.setdefault('manifest',{})
+    name=_midi_programs._free(entries,'editor/oce-mxml-rigs','.json',content)
+    manifest['rigs']=name;project['rigLibrary']=rigs
+    project.setdefault('import_warnings',[]).append(_midi_programs.GM_WARNING.replace('Imported MIDI program numbers','Imported MusicXML <midi-program> values'))
 
 
 def _gpif_capo_metadata(root,raw_tracks,tracks):

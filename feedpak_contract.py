@@ -228,14 +228,28 @@ def validate(manifest, entries, decode_json, safe_path, check_tree):
                     if isinstance(doc, dict) and 'tones' in doc)
     for binding in bindings:
         changes = binding.get('changes', [])
-        if not isinstance(changes, list) or any(not isinstance(change, dict) or 't' not in change or
-                not isinstance(change.get('name'), str) for change in changes):
-            raise ContractError('tones.changes: expected objects with numeric t and string name')
-        _ordered(changes, 't', 'tones.changes')
+        if not isinstance(changes, list) or any(not isinstance(change, dict) or 't' not in change for change in changes):
+            raise ContractError('tones.changes: expected objects with a numeric t')
+        times = [change['t'] for change in changes]
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) or
+                not math.isfinite(value) or value < 0 for value in times):
+            raise ContractError('tones.changes: t must be a finite nonnegative number')
+        # A missing name or an out-of-order t is lenient (warn, keep as authored): a reader that
+        # cannot resolve a tone's display name or relies on strict ordering falls back gracefully,
+        # so there is no playback-breaking reason to refuse the whole pack over it.
+        if any(not isinstance(change.get('name'), str) for change in changes):
+            warnings.append('tones.changes: a tone change has no name; the authored object is retained unchanged')
+        if times != sorted(times):
+            warnings.append('tones.changes: t is not in non-descending order; the authored order is retained unchanged')
         refs = ([binding['base_rig']] if 'base_rig' in binding else []) + [
             change['rig'] for change in changes if 'rig' in change]
-        if any(not isinstance(ref, str) or ref not in rig_ids for ref in refs):
-            raise ContractError('tones: a rig binding refers to a missing rig id')
+        # An unresolved rig id is lenient too: §7.9 already requires a reader with no matching
+        # rig to fall back to GM/no sound rather than refuse the song, so refusing the whole pack
+        # here over a dangling reference (e.g. to a rig stripped or renamed upstream) is stricter
+        # than the spec's own playback behavior requires.
+        for ref in refs:
+            if not isinstance(ref, str) or ref not in rig_ids:
+                warnings.append('tones: a rig binding refers to a missing rig id; the authored binding is retained unchanged')
     return {'specificationVersion': '1.25.0', 'declaredVersion': declared,
             'streams': checked, 'unknownDataPreserved': True,
             'warnings': warnings, 'mediaDecoded': False, 'playbackConformance': False}

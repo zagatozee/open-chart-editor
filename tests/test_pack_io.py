@@ -186,6 +186,43 @@ class PackIOTests(unittest.TestCase):
         restored=p.load_feedpak(p.save_feedpak(song))['arrangements'][0]
         self.assertEqual(restored['difficulties'],p._snapshot_arrangement(arr)['difficulties'])
 
+    def test_drum_tone_edits_survive_feedpak_instead_of_being_silently_discarded(self):
+        song=project('drums');arr=song['arrangements'][0]
+        arr['notes']=[{'id':'own','time':2,'sustain':0,'piece':'kick','velocity':96}]
+        arr['tones']={'base':'KitA','changes':[{'time':2,'name':'KitB'}],'definitions':{'KitA':{'opaque':True,'data':1},'KitB':{'opaque':True,'data':2}}}
+        restored=p.load_feedpak(p.save_feedpak(song))['arrangements'][0]
+        self.assertEqual(restored['tones']['base'],'KitA')
+        self.assertEqual(restored['tones']['changes'],[{'name':'KitB','t':2,'time':2}])
+        self.assertEqual(restored['tones']['definitions']['KitA'],{'opaque':True,'data':1,'name':'KitA'})
+        self.assertEqual(restored['tones']['definitions']['KitB'],{'opaque':True,'data':2,'name':'KitB'})
+
+    def test_guide_voice_rig_binding_is_explicit_opt_in_and_does_not_mutate_the_caller(self):
+        song=project('keys');arr=song['arrangements'][0]
+        arr['notes']=[{'id':'n','time':0,'sustain':0,'fret':60}]
+        arr['guideVoice']={'version':1,'family':'piano','program':0}
+        # Without the explicit opt-in flag, the guide voice stays an editor-only
+        # preview and never touches tones/rigs.json.
+        unopted=p.load_feedpak(p.save_feedpak(song))['arrangements'][0]
+        self.assertNotIn('rigLibrary',p.load_feedpak(p.save_feedpak(song)))
+        self.assertNotIn('base_rig',unopted.get('tones',{}))
+        arr['writeGuideVoiceRig']=True
+        before=copy.deepcopy(song)
+        packed=p.save_feedpak(song)
+        self.assertEqual(song,before)
+        loaded=p.load_feedpak(packed)
+        bound=loaded['arrangements'][0]
+        self.assertEqual(bound['tones']['base_rig'],'oce-guide-lead')
+        self.assertEqual(loaded['rigLibrary'],{'version':1,'rigs':[{'id':'oce-guide-lead','blocks':[{'role':'source','intent':{'kind':'instrument','family':'piano','gm':{'program':0}}}]}]})
+        # A second part bound in the same save gets a disambiguated id and the
+        # mute flag becomes an author-silence `bypassed` block, without disturbing
+        # the first part's rig.
+        other=p._import_arrangement('other','Other','keys');other['notes']=[{'id':'n','time':0,'sustain':0,'fret':60}];other['guideVoice']={'version':1,'family':'strings','program':42};other['writeGuideVoiceRig']=True;other['guideVoiceMuted']=True
+        song['arrangements'].append(other)
+        loaded2=p.load_feedpak(p.save_feedpak(song))
+        rigs={rig['id']:rig for rig in loaded2['rigLibrary']['rigs']}
+        self.assertEqual(set(rigs),{'oce-guide-lead','oce-guide-other'})
+        self.assertEqual(rigs['oce-guide-other']['blocks'][0]['bypassed'],True)
+
     def test_drum_authoring_sidecar_native_highest_and_live_low_level_roundtrip(self):
         song=project('drums');arr=song['arrangements'][0]
         low={'id':'low','time':2,'sustain':.75,'piece':'snare','velocity':77,'ghost':True}
@@ -1137,6 +1174,37 @@ class PackIOTests(unittest.TestCase):
         for bad in [xml.replace(b'<note>',b'<note><grace/>',1),xml.replace(b'<duration>2</duration>',b'<duration>2</duration><notations><octave-shift/></notations>',1),b'<score-timewise/>']:
             with self.assertRaises(p.ProjectError):
                 p.load_project(bad,'score.musicxml')
+    def test_musicxml_midi_program_binds_an_approximate_gm_rig_like_midi_import_but_respects_existing_tones(self):
+        def part(id_,program=None,extra=''):
+            instrument=f'<midi-instrument id="{id_}-I1"><midi-program>{program}</midi-program></midi-instrument>' if program is not None else ''
+            return f'<score-part id="{id_}"><part-name>{id_}</part-name>{instrument}</score-part>',f'<part id="{id_}"><measure number="0" implicit="yes"><attributes><divisions>1</divisions></attributes><note>{extra}<pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note></measure></part>'
+        p1,m1=part('P1',1)
+        p2,m2=part('P2',None)
+        xml=('<score-partwise version="4.0"><part-list>'+p1+p2+'</part-list>'+m1+m2+'</score-partwise>').encode()
+        song=p.load_project(xml,'score.musicxml')
+        bound,unbound=song['arrangements']
+        self.assertEqual(bound['sourceProgram'],0)
+        self.assertEqual(bound['tones'],{'base':'Approximate GM program 0','base_rig':'oce-mxml-gm-0','changes':[]})
+        self.assertEqual(bound['musicXmlProgramIntent'],{'version':1,'program':0})
+        self.assertNotIn('sourceProgram',unbound);self.assertNotIn('tones',unbound)
+        self.assertEqual(song['rigLibrary'],{'version':1,'rigs':[{'id':'oce-mxml-gm-0','name':'Approximate GM program 0','blocks':[{'role':'source','intent':{'kind':'instrument','family':'piano','gm':{'program':0}}}]}]})
+        self.assertTrue(any('MusicXML <midi-program>' in w for w in song['import_warnings']))
+        song['_pack']['manifest']['stems']=[{'id':'full','file':'audio/original.wav','default':True}]
+        audio=io.BytesIO()
+        with wave.open(audio,'wb') as wav:
+            wav.setparams((1,2,8000,0,'NONE','not compressed'));wav.writeframes(b'\x00\x00'*800)
+        song['_pack']['entries']['audio/original.wav']=base64.b64encode(audio.getvalue()).decode('ascii')
+        reloaded=p.load_feedpak(p.save_feedpak(song))
+        self.assertEqual(reloaded['arrangements'][0]['tones']['base_rig'],'oce-mxml-gm-0')
+        self.assertEqual(reloaded['rigLibrary']['rigs'][0]['id'],'oce-mxml-gm-0')
+        # An existing authored tones/guideVoice binding always wins over the import's rig pass.
+        manual={'arrangements':[{'id':'a','sourceProgram':10,'tones':{'base':'Custom'}},{'id':'b','sourceProgram':11,'guideVoice':{'version':1,'family':'piano'}}],'import_warnings':[]}
+        p._mxl_apply_programs(manual)
+        self.assertEqual(manual['arrangements'][0]['tones'],{'base':'Custom'})
+        self.assertNotIn('musicXmlProgramIntent',manual['arrangements'][0])
+        self.assertNotIn('tones',manual['arrangements'][1])
+        self.assertNotIn('rigLibrary',manual)
+
     def test_unknown_fields_and_opaque_assets_survive_edits(self):
         manifest={'title':'Original','artist':'Author','duration':8,'arrangements':[{'id':'lead','type':'guitar','file':'arr.json','futureEntry':{'x':5}},{'id':'notation','notation':'score.json','type':'cello'}],'stems':[{'id':'full','file':'song.wav'}], 'cover':'cover.png','futureManifest':['x'],'song_timeline':'timeline.json'}
         raw={'name':'Lead','tuning':[0]*6,'notes':[{'t':1,'s':0,'f':3,'futureNote':17,'pm':True}], 'futureArrangement':{'x':True}, 'phrases':[{'start_time':0,'end_time':8,'levels':[{'notes':[{'t':1,'s':0,'f':3}]}]}]}

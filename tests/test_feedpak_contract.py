@@ -268,6 +268,42 @@ def test_unrendered_rig_asset_missing_does_not_discard_or_reject_the_song():
     assert imported['_feedpakValidation']['playbackConformance'] is False
 
 
+def _bind_tones(entries, tones):
+    doc = manifest(entries)
+    name = doc['arrangements'][0]['file']
+    arr = json.loads(entries[name])
+    arr['tones'] = tones
+    entries[name] = json.dumps(arr).encode()
+    return entries
+
+
+def test_tone_change_with_no_name_is_a_warning_not_a_refused_pack():
+    entries = _bind_tones(fixture(), {'base': 'Clean', 'changes': [{'t': 1}]})
+    imported = p.load_feedpak(archive(entries))
+    assert imported['arrangements'][0]['tones']['changes'] == [{'t': 1, 'time': 1}]
+    assert any('has no name' in warning for warning in imported['import_warnings'])
+
+
+def test_out_of_order_tone_changes_are_a_warning_not_a_refused_pack():
+    entries = _bind_tones(fixture(), {'base': 'Clean',
+        'changes': [{'t': 2, 'name': 'Drive'}, {'t': 1, 'name': 'Clean'}]})
+    imported = p.load_feedpak(archive(entries))
+    assert [c['t'] for c in imported['arrangements'][0]['tones']['changes']] == [2, 1]
+    assert any('not in non-descending order' in warning for warning in imported['import_warnings'])
+
+
+def test_unresolved_rig_binding_is_a_warning_not_a_refused_pack():
+    entries = _bind_tones(fixture(), {'base': 'Clean', 'base_rig': 'missing', 'changes': []})
+    imported = p.load_feedpak(archive(entries))
+    assert imported['arrangements'][0]['tones']['base_rig'] == 'missing'
+    assert any('refers to a missing rig id' in warning for warning in imported['import_warnings'])
+    # A malformed tones.changes shape (not a list of objects with a numeric t) stays a hard
+    # refusal; only the name/order/rig-resolution leniency above is new.
+    broken = _bind_tones(fixture(), {'base': 'Clean', 'changes': [{'name': 'Drive'}]})
+    with pytest.raises(p.ProjectError, match='numeric t'):
+        p.load_feedpak(archive(broken))
+
+
 def test_explicit_graph_overrides_metadata_block_order_for_source_head():
     library = {'version':1,'rigs':[{'id':'own','blocks':[
         {'id':'amp','intent':{'kind':'amp'}},

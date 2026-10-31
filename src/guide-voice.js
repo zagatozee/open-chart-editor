@@ -37,19 +37,27 @@ function explicit(setting){
  if(!setting||setting.version!==1)throw Error('Unsupported guide voice setting version');
  return guideVoiceSetting(setting.family,{program:setting.program});
 }
-/** Resolve public tone bindings at one chart attack. A change without a rig is
- * an unresolved legacy tone, not permission to silently keep the prior rig.
- * Imported model time and native t are accepted; equal-time ties use source
- * order. Negative/nonfinite changes are ignored with a disclosed warning.
+/** Resolve public tone bindings at one chart attack. FeedBack core's own
+ * soundTimeline.rigAt (settled for core #1033) keeps whichever rig was already
+ * in effect across a tone change with no `rig` field, rather than unbinding
+ * it; the guide matches that so auditioning a project in OCE does not go
+ * silent at every change an OCE-native (non-rig) tone edit writes, when
+ * FeedBack itself would keep playing. An explicit `rig` — including a
+ * deliberately empty/non-string one an author wrote by hand — still takes
+ * over, even to clear the binding; only an absent `rig` field carries the
+ * prior value forward. Imported model time and native t are accepted;
+ * equal-time ties use source order. Negative/nonfinite changes are ignored
+ * with a disclosed warning.
  */
 export function guideRigAt(tones,time=0){
  if(!Number.isFinite(time)||time<0)throw Error('Guide time must be nonnegative seconds');
- const warnings=[];let rig=typeof tones?.base_rig==='string'?tones.base_rig.trim():null,unboundChange=false;
+ const warnings=[];let rig=typeof tones?.base_rig==='string'?tones.base_rig.trim():null;
  const changes=(Array.isArray(tones?.changes)?tones.changes:[]).map((change,index)=>({change,index,time:change?.time??change?.t}));
  const nativeVocabulary=!!tones&&Object.hasOwn(tones,'base_rig')||changes.some(row=>row.change&&Object.hasOwn(row.change,'rig'));
  for(const row of changes.filter(row=>!Number.isFinite(row.time)||row.time<0))warnings.push('Invalid tone-change time was not interpreted for guide audition');
  const valid=changes.filter(row=>Number.isFinite(row.time)&&row.time>=0).sort((a,b)=>a.time-b.time||a.index-b.index);
- for(const row of valid)if(row.time<=time){rig=typeof row.change.rig==='string'?row.change.rig.trim():null;unboundChange=!rig;}
+ for(const row of valid)if(row.time<=time&&Object.hasOwn(row.change,'rig'))rig=typeof row.change.rig==='string'?row.change.rig.trim():null;
+ const unboundChange=!rig;
  if(unboundChange&&nativeVocabulary)warnings.push('Current legacy tone change has no portable rig binding');
  return {rig:rig||null,unboundChange,nativeVocabulary,warnings};
 }
