@@ -56,13 +56,21 @@ Python lists the licences of the software it incorporates at
 https://docs.python.org/3/license.html. PyGuitarPro is LGPL-3.0:
 requirements-build.txt and tools/standalone.spec let you rebuild with a modified
 copy. This program's source is at https://github.com/zagatozee/open-chart-editor.
-The external tools below stay external.
+
+They also bundle gp2rs.py, gp2rs_gpx.py, safepath.py, safe_xml.py and
+notation.py from FeedBack (https://git.barlind.se/freedBack/feedBack),
+AGPL-3.0-only, same license as this project: the Guitar Pro converters and
+notation support, so those features work without a separate FeedBack install.
+Pinned source commit and update instructions: tools/vendor/feedback-lib/README.txt.
+A local FeedBack install, where present, is used in preference to this bundled
+copy (see feedback_core() in pack_io.py). The external tools below stay external.
 
 External tools, invoked and never bundled: FFmpeg; vgmstream for Wwise .wem
 audio (from a local FeedBack/Slopsmith install or PATH); the DLC Builder
-toolkit's ww2ogg/revorb; the FeedBack gp2rs/gp2rs_gpx Guitar Pro converters
-(run in an isolated subprocess, PyGuitarPro for GP3-5); optionally a local
-gp-to-feedpak checkout for import assistance. .NET SDK is an external tool.
+toolkit's ww2ogg/revorb; the FeedBack gp2rs/gp2rs_gpx Guitar Pro converters when
+run against a local FeedBack install rather than the bundled copy above (run in
+an isolated subprocess, PyGuitarPro for GP3-5); optionally a local gp-to-feedpak
+checkout for import assistance. .NET SDK is an external tool.
 
 Format interoperability: R+ (Rocksmith+) song folder XML, metadata.json and tone
 references, and the R+ Workshop .rsw layout, were worked out to let this
