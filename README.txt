@@ -31,7 +31,10 @@ Standalone builds
   Windows x64, macOS Apple Silicon and Linux x64 builds that need no Python.
   Each archive is named open-chart-editor-<platform>-v<version>-<commit>, e.g.
   open-chart-editor-windows-x64-v0.11.0-a3f9c21.zip: the version is plugin.json's,
-  the commit is the exact source it was built from.
+  the commit is the exact source it was built from. Tick "publish_release" on
+  the Run workflow dialog to also publish these three archives as a GitHub
+  Release tagged with that same v<version>-<commit>, once all three succeed;
+  left unticked (the default), the run only produces downloadable artifacts.
   Unpack one, keep the folder together and run open-chart-editor inside it (on
   Linux, from a terminal). The editor opens in your browser; close the program's
   window or press Ctrl+C to stop.

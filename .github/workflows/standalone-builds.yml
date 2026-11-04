@@ -1,11 +1,31 @@
 # Builds the standalone program for each OS, only when started by hand from the Actions tab.
+# Optionally also publishes a GitHub Release with the three archives attached - also opt-in
+# per run, never automatic, via the "publish_release" input.
 name: Standalone builds
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Also publish a GitHub Release with the three build archives attached
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      value: ${{ steps.compute.outputs.value }}
+    steps:
+      - uses: actions/checkout@v5
+      # Human-readable version, plus the exact commit it was built from: v<plugin.json version>-<short sha>.
+      - id: compute
+        run: |
+          base=$(python3 -c "import json;print(json.load(open('plugin.json'))['version'])")
+          sha=$(git rev-parse --short HEAD)
+          echo "value=v${base}-${sha}" >> "$GITHUB_OUTPUT"
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -15,6 +35,8 @@ jobs:
           - {os: macos-latest, tar: tar, platform: macos-arm64, ext: zip}
           - {os: ubuntu-22.04, tar: tar, platform: linux-x64, ext: tar.gz}
     runs-on: ${{ matrix.os }}
+    outputs:
+      version: ${{ needs.version.outputs.value }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -23,13 +45,9 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: python -m PyInstaller tools/standalone.spec --noconfirm
       - run: python tools/smoke-standalone.py dist/open-chart-editor/open-chart-editor
-      # Human-readable version, plus the exact commit it was built from: v<plugin.json version>-<short sha>.
       - id: archive
         shell: bash
-        run: |
-          base=$(python -c "import json;print(json.load(open('plugin.json'))['version'])")
-          sha=$(git rev-parse --short HEAD)
-          echo "name=open-chart-editor-${{ matrix.platform }}-v${base}-${sha}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
+        run: echo "name=open-chart-editor-${{ matrix.platform }}-${{ needs.version.outputs.value }}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
       # Archived here because artifact uploads lose the program's executable bit.
       - run: ${{ matrix.tar }} -a -cf ${{ steps.archive.outputs.name }} -C dist open-chart-editor
       - uses: actions/upload-artifact@v7
@@ -37,3 +55,22 @@ jobs:
           path: ${{ steps.archive.outputs.name }}
           archive: false
           if-no-files-found: error
+  release:
+    needs: [version, build]
+    if: ${{ inputs.publish_release }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          pattern: open-chart-editor-*
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.version.outputs.value }}" artifacts/* \
+            --repo "${{ github.repository }}" \
+            --title "Open Chart Editor ${{ needs.version.outputs.value }}" \
+            --notes "Standalone builds for Windows, macOS and Linux. Built from commit ${{ github.sha }}."
