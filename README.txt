@@ -29,6 +29,9 @@ Open the editor
 Standalone builds
   The "Standalone builds" workflow in GitHub Actions, started by hand, produces
   Windows x64, macOS Apple Silicon and Linux x64 builds that need no Python.
+  Each archive is named open-chart-editor-<platform>-v<version>-<commit>, e.g.
+  open-chart-editor-windows-x64-v0.11.0-a3f9c21.zip: the version is plugin.json's,
+  the commit is the exact source it was built from.
   Unpack one, keep the folder together and run open-chart-editor inside it (on
   Linux, from a terminal). The editor opens in your browser; close the program's
   window or press Ctrl+C to stop.

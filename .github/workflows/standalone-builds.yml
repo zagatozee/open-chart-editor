@@ -11,9 +11,9 @@ jobs:
       matrix:
         include:
           # Windows names its own tar, as the runner's PATH may reach Git's, which cannot write zips.
-          - {os: windows-latest, tar: 'C:\Windows\System32\tar.exe', archive: open-chart-editor-windows-x64.zip}
-          - {os: macos-latest, tar: tar, archive: open-chart-editor-macos-arm64.zip}
-          - {os: ubuntu-22.04, tar: tar, archive: open-chart-editor-linux-x64.tar.gz}
+          - {os: windows-latest, tar: 'C:\Windows\System32\tar.exe', platform: windows-x64, ext: zip}
+          - {os: macos-latest, tar: tar, platform: macos-arm64, ext: zip}
+          - {os: ubuntu-22.04, tar: tar, platform: linux-x64, ext: tar.gz}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -23,10 +23,17 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: python -m PyInstaller tools/standalone.spec --noconfirm
       - run: python tools/smoke-standalone.py dist/open-chart-editor/open-chart-editor
+      # Human-readable version, plus the exact commit it was built from: v<plugin.json version>-<short sha>.
+      - id: archive
+        shell: bash
+        run: |
+          base=$(python -c "import json;print(json.load(open('plugin.json'))['version'])")
+          sha=$(git rev-parse --short HEAD)
+          echo "name=open-chart-editor-${{ matrix.platform }}-v${base}-${sha}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
       # Archived here because artifact uploads lose the program's executable bit.
-      - run: ${{ matrix.tar }} -a -cf ${{ matrix.archive }} -C dist open-chart-editor
+      - run: ${{ matrix.tar }} -a -cf ${{ steps.archive.outputs.name }} -C dist open-chart-editor
       - uses: actions/upload-artifact@v7
         with:
-          path: ${{ matrix.archive }}
+          path: ${{ steps.archive.outputs.name }}
           archive: false
           if-no-files-found: error
