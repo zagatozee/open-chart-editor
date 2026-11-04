@@ -36,8 +36,13 @@ Standalone builds
     Windows: choose More info > Run anyway.
     macOS: run xattr -dr com.apple.quarantine on the unpacked folder.
   FFmpeg and the other external tools stay separate and optional. Guitar Pro
-  import and editing notation-only keys parts need FeedBack's code: set
-  OCE_FEEDBACK_LIB to FeedBack's lib folder. The AmpliTube 5 live host is not included; it needs running from source.
+  import and editing notation-only keys parts work out of the box: the build
+  bundles FeedBack's converter/notation modules (tools/vendor/feedback-lib,
+  AGPL-3.0, pinned - see that folder's README for the source and how to
+  update it). A real FeedBack install, if present (OCE_FEEDBACK_LIB, a plugin
+  install, or a dev checkout found automatically), is still preferred over
+  the bundled copy when both exist. The AmpliTube 5 live host is not
+  included; it needs running from source.
   To build one on your own machine:
     pip install -r requirements-build.txt
     pyinstaller tools/standalone.spec

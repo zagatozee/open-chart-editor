@@ -3611,13 +3611,20 @@ def _gp_worker(request):
 
 
 def feedback_core():
-    """FeedBack's lib folder with the Guitar Pro converters, or None. Checks
-    OCE_FEEDBACK_LIB, then the plugin install (feedBack/plugins/<editor>),
-    then a development checkout beside this one or its parent (freedBack/feedBack/lib)."""
+    """FeedBack's lib folder with the Guitar Pro converters, or None. FeedBack is an optional
+    integration, not a requirement: this tool stands alone for Rocksmith 2014, Rocksmith+ and
+    anything else it reads directly. Guitar Pro import is the one feature that uses FeedBack's
+    converters, and a vendored copy (tools/vendor/feedback-lib) ships with OCE itself so that
+    still works with no FeedBack install present. Checks, in order: OCE_FEEDBACK_LIB, the plugin
+    install (feedBack/plugins/<editor>), a development checkout beside this one or its parent
+    (freedBack/feedBack/lib), then the vendored copy - a real FeedBack install is preferred when
+    present, since it may be newer than the pinned vendored copy."""
     import os
     here=Path(__file__).resolve()
-    # A standalone build runs wherever it was unpacked, so nothing beside it is trusted as code.
-    candidates=(os.environ.get('OCE_FEEDBACK_LIB'),) if getattr(sys,'frozen',False) else (os.environ.get('OCE_FEEDBACK_LIB'),here.parents[2]/'lib',here.parents[1]/'freedBack'/'feedBack'/'lib',here.parents[2]/'freedBack'/'feedBack'/'lib')
+    vendored=here.parent/'tools'/'vendor'/'feedback-lib'
+    # A standalone build runs wherever it was unpacked, so nothing beside it is trusted as code;
+    # the vendored copy is bundled inside the build itself, so it stays trusted when frozen.
+    candidates=(os.environ.get('OCE_FEEDBACK_LIB'),vendored) if getattr(sys,'frozen',False) else (os.environ.get('OCE_FEEDBACK_LIB'),here.parents[2]/'lib',here.parents[1]/'freedBack'/'feedBack'/'lib',here.parents[2]/'freedBack'/'feedBack'/'lib',vendored)
     for candidate in candidates:
         if candidate and (Path(candidate)/'gp2rs.py').is_file() and (Path(candidate)/'gp2rs_gpx.py').is_file():
             return Path(candidate).resolve()
