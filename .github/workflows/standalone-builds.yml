@@ -1,12 +1,12 @@
-# Builds the standalone program for each OS, only when started by hand from the Actions tab.
-# Optionally also publishes a GitHub Release with the three archives attached - also opt-in
-# per run, never automatic, via the "publish_release" input.
+# Builds the standalone program for each OS, plus a ready-to-use FeedBack plugin zip, only
+# when started by hand from the Actions tab. Optionally also publishes a GitHub Release with
+# all four archives attached - also opt-in per run, never automatic, via "publish_release".
 name: Standalone builds
 on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Also publish a GitHub Release with the three build archives attached
+        description: Also publish a GitHub Release with the build archives attached
         type: boolean
         default: false
 permissions:
@@ -30,13 +30,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows names its own tar, as the runner's PATH may reach Git's, which cannot write zips.
-          - {os: windows-latest, tar: 'C:\Windows\System32\tar.exe', platform: windows-x64, ext: zip}
-          - {os: macos-latest, tar: tar, platform: macos-arm64, ext: zip}
-          - {os: ubuntu-22.04, tar: tar, platform: linux-x64, ext: tar.gz}
+          # All three pack to .zip. Windows/macOS tar is bsdtar (libarchive), which can write
+          # zip via -a; Linux's tar is GNU tar, which can't, so that leg uses zip directly.
+          # (A prior .tar.gz leg here reliably failed GitHub's artifact download/extract -
+          # see the standalone-gp-converters PR history - so every archive is a plain zip now.)
+          - {os: windows-latest, platform: windows-x64, pack: 'C:\Windows\System32\tar.exe -a -cf "$ARCHIVE" -C dist open-chart-editor'}
+          - {os: macos-latest, platform: macos-arm64, pack: 'tar -a -cf "$ARCHIVE" -C dist open-chart-editor'}
+          - {os: ubuntu-22.04, platform: linux-x64, pack: '(cd dist && zip -rq "$GITHUB_WORKSPACE/$ARCHIVE" open-chart-editor)'}
     runs-on: ${{ matrix.os }}
-    outputs:
-      version: ${{ needs.version.outputs.value }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -47,16 +48,46 @@ jobs:
       - run: python tools/smoke-standalone.py dist/open-chart-editor/open-chart-editor
       - id: archive
         shell: bash
-        run: echo "name=open-chart-editor-${{ matrix.platform }}-${{ needs.version.outputs.value }}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
+        run: echo "name=open-chart-editor-${{ matrix.platform }}-${{ needs.version.outputs.value }}.zip" >> "$GITHUB_OUTPUT"
       # Archived here because artifact uploads lose the program's executable bit.
-      - run: ${{ matrix.tar }} -a -cf ${{ steps.archive.outputs.name }} -C dist open-chart-editor
+      - shell: bash
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.name }}
+        run: ${{ matrix.pack }}
       - uses: actions/upload-artifact@v7
         with:
           path: ${{ steps.archive.outputs.name }}
           archive: false
           if-no-files-found: error
+  plugin:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - id: stage
+        # Same tools/install-local.py every manual plugin install uses, so this is exactly what
+        # that script would copy - not a second, separately-maintained file list.
+        run: |
+          set -e
+          stage=/tmp/oce-plugin-stage/open_chart_editor
+          mkdir -p "$(dirname "$stage")"
+          digest=$(python tools/install-local.py --destination "$stage" | python3 -c "import json,sys;print(json.load(sys.stdin)['sourceDigest'])")
+          python tools/install-local.py --destination "$stage" --apply --expect-source-digest "$digest"
+          python -m py_compile $(find "$stage" -name '*.py')
+          python3 -c "import json;d=json.load(open('$stage/plugin.json'));assert d['id']=='open_chart_editor'"
+          name="open-chart-editor-feedback-plugin-${{ needs.version.outputs.value }}.zip"
+          (cd "$(dirname "$stage")" && zip -rq "$GITHUB_WORKSPACE/$name" open_chart_editor)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.stage.outputs.name }}
+          archive: false
+          if-no-files-found: error
   release:
-    needs: [version, build]
+    needs: [version, build, plugin]
     if: ${{ inputs.publish_release }}
     runs-on: ubuntu-22.04
     permissions:
@@ -73,4 +104,4 @@ jobs:
           gh release create "${{ needs.version.outputs.value }}" artifacts/* \
             --repo "${{ github.repository }}" \
             --title "Open Chart Editor ${{ needs.version.outputs.value }}" \
-            --notes "Standalone builds for Windows, macOS and Linux. Built from commit ${{ github.sha }}."
+            --notes "Standalone builds for Windows, macOS and Linux, plus a ready-to-use FeedBack plugin zip. Built from commit ${{ github.sha }}."
