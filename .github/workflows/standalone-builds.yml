@@ -34,7 +34,10 @@ jobs:
           # zip via -a; Linux's tar is GNU tar, which can't, so that leg uses zip directly.
           # (A prior .tar.gz leg here reliably failed GitHub's artifact download/extract -
           # see the standalone-gp-converters PR history - so every archive is a plain zip now.)
-          - {os: windows-latest, platform: windows-x64, pack: 'C:\Windows\System32\tar.exe -a -cf "$ARCHIVE" -C dist open-chart-editor'}
+          # Forward slashes here: this step runs under bash (shell: bash below), which treats a
+          # backslash as an escape character and silently drops it - C:\Windows\...\tar.exe
+          # becomes C:WindowsSystem32tar.exe and "command not found". Windows accepts either.
+          - {os: windows-latest, platform: windows-x64, pack: 'C:/Windows/System32/tar.exe -a -cf "$ARCHIVE" -C dist open-chart-editor'}
           - {os: macos-latest, platform: macos-arm64, pack: 'tar -a -cf "$ARCHIVE" -C dist open-chart-editor'}
           - {os: ubuntu-22.04, platform: linux-x64, pack: '(cd dist && zip -rq "$GITHUB_WORKSPACE/$ARCHIVE" open-chart-editor)'}
     runs-on: ${{ matrix.os }}
