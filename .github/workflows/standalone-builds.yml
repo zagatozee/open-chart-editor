@@ -96,29 +96,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
+      # Each artifact is the zip its job made. Download it as it is: unpacking it here and zipping
+      # it again loses the program's executable bit and turns every symlink into a text file.
+      - uses: actions/download-artifact@v8
         with:
-          path: artifacts
+          path: release-assets
           pattern: open-chart-editor-*
-      # Each build/plugin job uploads with archive:false against an already-zipped path, so that
-      # GitHub stores the zip's own entries - including their Unix permission bits, which its
-      # default handling of loose files otherwise strips - as the artifact's file tree, not the
-      # zip file itself. Downloaded, each artifact is therefore a folder (named after the
-      # archive), holding one subfolder (the original top-level folder from inside that zip:
-      # open-chart-editor for the three builds, open_chart_editor for the plugin). Without
-      # merge-multiple they land in separate per-artifact folders rather than colliding (all
-      # three platform builds share that same open-chart-editor subfolder name); each is re-zipped
-      # here into one clean file per release asset, reproducing what a direct artifact download
-      # from the Actions UI already gives a person who skips the release and just grabs one build.
-      - shell: bash
-        run: |
-          set -e
-          mkdir -p release-assets
-          for dir in artifacts/*/; do
-            name="$(basename "$dir")"
-            inner="$(basename "$(find "$dir" -mindepth 1 -maxdepth 1 -type d)")"
-            (cd "$dir" && zip -rq "$GITHUB_WORKSPACE/release-assets/$name" "$inner")
+          merge-multiple: true
+          skip-decompress: true
+      # The smoke test runs before archiving, so it can't see a damaged zip. Python loads through
+      # the _internal/Python symlink on macOS, and a program without the bit opens as a document.
+      - run: |
+          for zip in release-assets/open-chart-editor-{macos-arm64,linux-x64}-*.zip; do
+            unzip -Z "$zip" | grep -qE '^-rwx.* open-chart-editor/open-chart-editor$'
           done
+          unzip -Z release-assets/open-chart-editor-macos-arm64-*.zip | grep -qE '^l.* open-chart-editor/_internal/Python$'
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -28,11 +28,12 @@ Just want to use it? (no Python, no command line, no developer tools)
     and run ./open-chart-editor). After a few seconds it opens in your
     web browser. To close it, close that window or its black console
     window, whichever appeared.
-    Windows and macOS will show a one-time security warning, because
-    these builds aren't signed with a paid certificate:
+    Windows and macOS will stop it the first time, because these builds
+    aren't signed with a paid certificate:
       Windows: click "More info", then "Run anyway".
-      macOS: right-click (or Control-click) the program and choose
-      "Open", then confirm "Open" in the dialog that appears.
+      macOS: before the first run, open Terminal, type
+      xattr -dr com.apple.quarantine followed by a space, drag the
+      unzipped folder into the Terminal window, and press Return.
   - To use OCE as part of FeedBack: download
     open-chart-editor-feedback-plugin-.... and unzip it. You'll get a
     folder named open_chart_editor. Move that whole folder into
