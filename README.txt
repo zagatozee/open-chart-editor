@@ -15,6 +15,39 @@ each part of the project comes from.
 The development and packaging tools work locally: they publish nothing,
 install no games and scan no user library.
 
+Just want to use it? (no Python, no command line, no developer tools)
+  Go to the Releases page:
+    https://github.com/zagatozee/open-chart-editor/releases
+  and download one of these, whichever matches what you want:
+
+  - To run OCE on its own, without FeedBack: download the file for your
+    system - open-chart-editor-windows-x64-..., -macos-arm64-... or
+    -linux-x64-... - and unzip it. Keep everything in that unzipped folder
+    together (don't move just the program out of it). Double-click
+    open-chart-editor inside it (on Linux, open a terminal in that folder
+    and run ./open-chart-editor). After a few seconds it opens in your
+    web browser. To close it, close that window or its black console
+    window, whichever appeared.
+    Windows and macOS will show a one-time security warning, because
+    these builds aren't signed with a paid certificate:
+      Windows: click "More info", then "Run anyway".
+      macOS: right-click (or Control-click) the program and choose
+      "Open", then confirm "Open" in the dialog that appears.
+  - To use OCE as part of FeedBack: download
+    open-chart-editor-feedback-plugin-.... and unzip it. You'll get a
+    folder named open_chart_editor. Move that whole folder into
+    FeedBack's plugins folder (FeedBack Desktop: the plugins folder
+    inside FeedBack's app data folder; a manual FeedBack install: the
+    plugins folder next to FeedBack itself). Restart FeedBack. Open
+    Chart Editor now appears in FeedBack's navigation.
+
+  If the Releases page is empty, nobody has published a build yet - ask
+  whoever maintains this repository to run the "Standalone builds"
+  workflow (GitHub Actions tab) with "publish_release" ticked.
+
+  The sections below are for running from source or building it
+  yourself; skip them if the above already got you going.
+
 Open the editor
   Double-click launch.cmd, then open http://127.0.0.1:8766.
   Alternatively: python dev_server.py
@@ -28,13 +61,17 @@ Open the editor
 
 Standalone builds
   The "Standalone builds" workflow in GitHub Actions, started by hand, produces
-  Windows x64, macOS Apple Silicon and Linux x64 builds that need no Python.
-  Each archive is named open-chart-editor-<platform>-v<version>-<commit>, e.g.
-  open-chart-editor-windows-x64-v0.11.0-a3f9c21.zip: the version is plugin.json's,
-  the commit is the exact source it was built from. Tick "publish_release" on
-  the Run workflow dialog to also publish these three archives as a GitHub
-  Release tagged with that same v<version>-<commit>, once all three succeed;
-  left unticked (the default), the run only produces downloadable artifacts.
+  Windows x64, macOS Apple Silicon and Linux x64 builds that need no Python,
+  plus a ready-to-unzip FeedBack plugin archive (same runtime files
+  tools/install-local.py would install, pre-zipped). See "Just want to use
+  it?" above for the end-user instructions for all four.
+  Each archive is named open-chart-editor-<platform-or-feedback-plugin>-v<version>-<commit>,
+  e.g. open-chart-editor-windows-x64-v0.11.0-a3f9c21.zip: the version is
+  plugin.json's, the commit is the exact source it was built from. Tick
+  "publish_release" on the Run workflow dialog to also publish these four
+  archives as a GitHub Release tagged with that same v<version>-<commit>,
+  once every build job succeeds; left unticked (the default), the run only
+  produces downloadable artifacts.
   Unpack one, keep the folder together and run open-chart-editor inside it (on
   Linux, from a terminal). The editor opens in your browser; close the program's
   window or press Ctrl+C to stop.
