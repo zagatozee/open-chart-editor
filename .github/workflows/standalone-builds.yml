@@ -100,11 +100,29 @@ jobs:
         with:
           path: artifacts
           pattern: open-chart-editor-*
-          merge-multiple: true
+      # Each build/plugin job uploads with archive:false against an already-zipped path, so that
+      # GitHub stores the zip's own entries - including their Unix permission bits, which its
+      # default handling of loose files otherwise strips - as the artifact's file tree, not the
+      # zip file itself. Downloaded, each artifact is therefore a folder (named after the
+      # archive), holding one subfolder (the original top-level folder from inside that zip:
+      # open-chart-editor for the three builds, open_chart_editor for the plugin). Without
+      # merge-multiple they land in separate per-artifact folders rather than colliding (all
+      # three platform builds share that same open-chart-editor subfolder name); each is re-zipped
+      # here into one clean file per release asset, reproducing what a direct artifact download
+      # from the Actions UI already gives a person who skips the release and just grabs one build.
+      - shell: bash
+        run: |
+          set -e
+          mkdir -p release-assets
+          for dir in artifacts/*/; do
+            name="$(basename "$dir")"
+            inner="$(basename "$(find "$dir" -mindepth 1 -maxdepth 1 -type d)")"
+            (cd "$dir" && zip -rq "$GITHUB_WORKSPACE/release-assets/$name" "$inner")
+          done
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ needs.version.outputs.value }}" artifacts/* \
+          gh release create "${{ needs.version.outputs.value }}" release-assets/* \
             --repo "${{ github.repository }}" \
             --title "Open Chart Editor ${{ needs.version.outputs.value }}" \
             --notes "Standalone builds for Windows, macOS and Linux, plus a ready-to-use FeedBack plugin zip. Built from commit ${{ github.sha }}."
