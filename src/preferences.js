@@ -17,6 +17,7 @@ export function readPreferences(storage){
   if(value.rollOrientations&&typeof value.rollOrientations==='object')result.rollOrientations=Object.fromEntries(['keys','drums'].map(type=>[type,value.rollOrientations[type]==='bottom'?'bottom':'left']));
   if(value.sustain&&typeof value.sustain==='object'&&!Array.isArray(value.sustain))result.sustain={clampNext:value.sustain.clampNext===true,gutterEnabled:value.sustain.gutterEnabled===true,gutterBeats:number(value.sustain.gutterBeats,0,16,.125)};
   if(value.mixer&&typeof value.mixer==='object'&&!Array.isArray(value.mixer))result.mixer=value.mixer;
+  if(value.mixerPanel&&typeof value.mixerPanel==='object'&&!Array.isArray(value.mixerPanel)){const panel=value.mixerPanel;result.mixerPanel={floating:panel.floating!==false,open:panel.open===true,x:number(panel.x,0,20000,null),y:number(panel.y,0,20000,null)};}
   if(value.liveMonitor&&typeof value.liveMonitor==='object'&&!Array.isArray(value.liveMonitor)){
    const input=value.liveMonitor;
    result.liveMonitor={

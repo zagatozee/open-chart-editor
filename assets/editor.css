@@ -30,6 +30,10 @@
 .ws-mixer-strip .ws-signal-meters{display:flex;gap:2px;margin:0;max-width:none;align-self:stretch;align-items:flex-end}
 .ws-app{--ws-vu-ok:#4cff4c;--ws-vu-warn:#ffff4c;--ws-vu-err:#ff4c4c;--ws-vu-ok-dim:#267f26;--ws-vu-warn-dim:#7f7f26;--ws-vu-err-dim:#7f2626;--ws-vu-rms:#000;--ws-vu-clip:#fff}
 .ws-mixer-channel.muted{--ws-vu-ok:#a3a3a3;--ws-vu-warn:#d9d9d9;--ws-vu-err:#717171;--ws-vu-ok-dim:#5a5a5a;--ws-vu-warn-dim:#757575;--ws-vu-err-dim:#414141}
+.ws-app{position:relative}
+.ws-mixer-float{position:absolute;z-index:30;max-width:calc(100% - 16px);background:var(--ws-panel);border:1px solid var(--ws-edge);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.ws-mixer-float-head{display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-bottom:1px solid var(--ws-edge);cursor:move;user-select:none;touch-action:none}.ws-mixer-float-head span{flex:1;font-weight:600}.ws-mixer-float-head button{padding:1px 8px;min-width:0}
+.ws-mixer-float .ws-audio-mixer{padding:8px 10px;gap:10px 8px;flex-wrap:nowrap;overflow-x:auto}.ws-mixer-float .ws-live-input{padding:0 10px 8px;font-size:10px;max-width:420px}.ws-mixer-float .ws-live-input small{display:block;margin-top:4px;color:var(--ws-dim)}.ws-mixer-float details{padding:0 10px 8px}
 .ws-vu{position:relative;width:6px;height:112px;overflow:hidden;background:linear-gradient(to top,var(--ws-vu-ok-dim) 0 66.667%,var(--ws-vu-warn-dim) 66.667% 85%,var(--ws-vu-err-dim) 85%)}
 .ws-vu i{position:absolute;left:0;right:0;display:block}
 .ws-vu-fill{inset:0;background:linear-gradient(to top,var(--ws-vu-ok) 0 66.667%,var(--ws-vu-warn) 66.667% 85%,var(--ws-vu-err) 85%);clip-path:inset(calc(100% - var(--vu-peak,0%)) 0 0 0)}
