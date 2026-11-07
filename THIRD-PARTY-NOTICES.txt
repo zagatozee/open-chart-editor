@@ -65,6 +65,14 @@ Pinned source commit and update instructions: tools/vendor/feedback-lib/README.t
 A local FeedBack install, where present, is used in preference to this bundled
 copy (see feedback_core() in pack_io.py). The external tools below stay external.
 
+Stem splitting (stem_split.py, the "Split stems" control in the Spectrum
+view) ships and bundles no separation engine or third-party source at all.
+It is a plain HTTP client of a separation server's published API (the one
+feedBack-demucs-server exposes) at whatever address the user types in; OCE
+never installs, downloads, or runs a model itself. This is interoperability
+with that API, on the same basis as this project's Rocksmith+ and .rsw
+format support (see "Format interoperability" below), not vendored code.
+
 External tools, invoked and never bundled: FFmpeg; vgmstream for Wwise .wem
 audio (from a local FeedBack/Slopsmith install or PATH); the DLC Builder
 toolkit's ww2ogg/revorb; the FeedBack gp2rs/gp2rs_gpx Guitar Pro converters when

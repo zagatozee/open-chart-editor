@@ -23,7 +23,7 @@ import zipfile
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 
 try:
@@ -68,6 +68,13 @@ except ImportError:
     _at5_spec=importlib.util.spec_from_file_location('open_chart_editor_at5_vst3',Path(__file__).with_name('at5_vst3.py'))
     at5_vst3=importlib.util.module_from_spec(_at5_spec)
     _at5_spec.loader.exec_module(at5_vst3)
+
+try:
+    from . import stem_split
+except ImportError:
+    _stem_split_spec=importlib.util.spec_from_file_location('open_chart_editor_stem_split',Path(__file__).with_name('stem_split.py'))
+    stem_split=importlib.util.module_from_spec(_stem_split_spec)
+    _stem_split_spec.loader.exec_module(stem_split)
 
 PREFIX = '/api/plugins/open_chart_editor' 
 
@@ -619,6 +626,32 @@ def setup(app, context=None):
         tags=await asyncio.to_thread(audio_tags,assets[result['token']]['path'])
         if tags:result['tags']=tags
         return result
+
+    # ── Stem splitting ──────────────────────────────────────────────────────
+    # OCE ships no separation engine of its own. This POSTs the project's audio
+    # to a separation-server URL the user supplies (see stem_split.py) and
+    # relays the stems back; nothing is installed or downloaded by OCE itself.
+    @app.post(PREFIX+'/stems/split')
+    async def stems_split(file: UploadFile = File(...), server_url: str = Form(''), model: str = Form('')):
+        data=await bounded_upload(file,MAX_AUDIO)
+        if not server_url:
+            raise HTTPException(400,'Enter a split server URL first')
+        try:
+            result=await asyncio.wait_for(
+                asyncio.to_thread(
+                    stem_split.split_full_mix,data,file.filename or 'mix.wav',
+                    server_url=server_url,model=model or None,
+                ),
+                timeout=20*60,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504,'Stem splitting exceeded 20 minutes')
+        except Exception as exc:
+            raise HTTPException(400,str(exc)) from exc
+        return {'ok':True,'stem_separation':result['stem_separation'],
+                'stems':[{'id':s['id'],'codec':s['codec'],
+                          'bytes_base64':base64.b64encode(s['bytes']).decode('ascii')}
+                         for s in result['stems']]}
 
     @app.post(PREFIX+'/cover')
     async def upload_cover(file: UploadFile = File(...)):

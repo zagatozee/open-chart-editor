@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spectrumStems,stemBytes} from '../src/spectrum-stems.js';
+import {spectrumStems,stemBytes,fullMixStem,fullMixBytes} from '../src/spectrum-stems.js';
 
 const project={_pack:{manifest:{stems:[
  {id:'full',file:'stems/full.ogg',default:true},
@@ -23,4 +23,15 @@ test('reads a stem file as exact bytes',()=>{
 });
 test('refuses a stem whose file is missing, or an id that is not offered',()=>{
  for(const id of ['gone','full','nope'])assert.throws(()=>stemBytes(project,id),/not in this project/);
+});
+test('finds the full/default stem, which spectrumStems() leaves out',()=>{
+ assert.equal(fullMixStem(project).id,'full');
+ assert.deepEqual([...fullMixBytes({_pack:{manifest:{stems:[{id:'full',file:'a'}]},entries:{a:btoa('hi')}}})],[...Buffer.from('hi')]);
+});
+test('falls back to the first stem with a file when none is marked default/full',()=>{
+ const noDefault={_pack:{manifest:{stems:[{id:'bass',file:'b'},{id:'drums',file:'d'}]},entries:{b:btoa('x')}}};
+ assert.equal(fullMixStem(noDefault).id,'bass');
+});
+test('refuses fullMixBytes on a project with no audio at all',()=>{
+ assert.throws(()=>fullMixBytes({_pack:{manifest:{stems:[]},entries:{}}}),/no audio to split/);
 });
