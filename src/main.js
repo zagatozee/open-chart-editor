@@ -2,6 +2,7 @@ import {installOceLibraryAction,createLibraryRequestInbox,createLibraryOpenContr
 import {planAnchorCoverage,applyAnchorCoverage} from './anchor-fit.js';
 import {chordDiagram} from './chord-diagram.js';
 import {EDITOR_COLORS,PIANO_PALETTES,pianoNoteColor,pianoPaletteId} from './piano-colors.js';
+import {spectrumStems,decodeStem} from './spectrum-stems.js';
 import {planZoneFit,applyZoneFit} from './zone-fit.js';
 import {VocalTimeline} from './vocal-timeline.js';
 import {combineProblem,findOverlaps,combineArrangements} from './combine.js';
@@ -124,6 +125,7 @@ function mount(root){
  let staveTheme='dark',showRests=true,staveMode='select',staveLength=1,staveHits=[],staveMetricsCache=null,staveKeyCache=null;
 let history=new History(demoProject()),arrangementId=history.project.arrangements[0].id,view='tab',inspector='settings',bottom='errors',selection=new Set(),cursor=0,lane=0,lastFret=3,zoom=110,snap=4,tool='pointer',clipboard=[],drag=null,dirty=false,saveHandle=null,lastSaveFormat='json',exportOptions={},lastDestination='',tapTimes=[],waveform=null,loadedAudio=null,draftTimer=null;
  let toneImportGeneration=0,tempoImportGeneration=0,chartImportGeneration=0;
+ let spectrumStemId='',spectrumAnalyses=new Map(),spectrumStemFailures=new Map(),spectrumStemsOwner=null,spectrumStemsGeneration=0;
  let spectrumAnalysis=null,spectrumWorker=null,spectrumGeneration=0,spectrumRenderAt=0,spectrumVisibleCharts=new Map(),spectrumZoom=50,spectrumSemitoneHeight=4,spectrumStatus='Import backing audio, then analyze its pitched energy.';
  let midiAppendScope=null,midiRenderFrame=null,midiRenderOwner=null;
  let midiUiPending=false,midiSetupPromise=null,recordStartGeneration=0,recordStartPending=false,transportStartGeneration=0,localStartPending=false;
@@ -1764,14 +1766,14 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    context.strokeStyle=pitch%12===0?'#53606c':'#202832';context.lineWidth=1;context.beginPath();context.moveTo(SPECTRUM_AXIS,y+.5);context.lineTo(width,y+.5);context.stroke();
   }
   const analysis=spectrumAnalysis&&spectrumAnalysis.generation===audio.decodeGeneration&&spectrumAnalysis.history===history?spectrumAnalysis:null;
-  if(analysis&&audio.buffer){
+  if(analysis){
    const [baseR,baseG,baseB]=hexToRgb(spectrumBaseColor||SPECTRUM_BASE_COLOR_DEFAULT),pitchCount=analysis.maxMidi-analysis.minMidi+1,frameSeconds=analysis.hopSize/analysis.sampleRate,startFrame=Math.max(0,Math.floor(visibleLeft/frameSeconds)),endFrame=Math.min(analysis.frameCount,Math.ceil(visibleRight/frameSeconds));
    for(let frame=startFrame;frame<endFrame;frame++){
     const x0=vx(frame*frameSeconds),x1=vx(Math.min(duration,(frame+1)*frameSeconds)),cellWidth=Math.max(1,x1-x0),offset=frame*pitchCount;
     for(let pitch=firstPitch;pitch<=lastPitch;pitch++){const index=pitch-analysis.minMidi;if(index<0||index>=pitchCount)continue;const value=analysis.values[offset+index];if(value<10)continue;const y=pitchTop+(lastPitch-pitch)*rowHeight;context.fillStyle=`rgba(${baseR},${baseG},${baseB},${(value/255*.88).toFixed(3)})`;context.fillRect(x0,y,cellWidth,rowHeight);}
    }
   }else{
-   context.textBaseline='middle';context.font='12px Segoe UI';context.fillStyle='#778391';context.fillText(audio.buffer?'Analyze audio to show pitched energy':'Import backing audio, then analyze to show pitched energy',SPECTRUM_AXIS+12,pitchTop+20);
+   context.textBaseline='middle';context.font='12px Segoe UI';context.fillStyle='#778391';context.fillText(audio.buffer||spectrumStemId?'Analyze audio to show pitched energy':'Import backing audio, then analyze to show pitched energy',SPECTRUM_AXIS+12,pitchTop+20);
   }
   context.textBaseline='top';context.font='10px Segoe UI';context.fillStyle='#aab4c2';context.fillText('TIME / BAR',4,8);context.fillText('AUDIO WAVEFORM',4,waveTop+4);
   for(const beat of project().beats){if(beat.time<visibleLeft||beat.time>visibleRight)continue;const x=vx(beat.time);context.strokeStyle=beat.measure>=0?'#8995a566':'#63708338';context.lineWidth=beat.measure>=0?1.2:1;context.beginPath();context.moveTo(x,SPECTRUM_SCORE_TOP);context.lineTo(x,height);context.stroke();if(beat.measure>=0){context.fillStyle='#b9c3cf';context.fillText(String(beat.measure),x+3,8);}}
@@ -1791,44 +1793,72 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(cursorX>=SPECTRUM_AXIS&&cursorX<=width){context.strokeStyle='#ff725e';context.lineWidth=2;context.beginPath();context.moveTo(cursorX,SPECTRUM_SCORE_TOP);context.lineTo(cursorX,height);context.stroke();}
   const status=$('spectrum-status');if(status)status.textContent=spectrumWorker?spectrumStatus:analysis?`Analyzed · ${(analysis.hopSize/analysis.sampleRate*1000).toFixed(0)} ms steps · ${analysis.fftSize}-sample window above ${noteName(analysis.crossoverMidi)}, ${analysis.lowFftSize}-sample window below`:spectrumStatus;
  }
+ function syncSpectrumStems(){
+  if(spectrumStemsOwner===history&&spectrumStemsGeneration===audio.decodeGeneration)return;
+  if(spectrumStemsOwner!==history){spectrumStemId='';spectrumStemFailures.clear();}
+  spectrumStemsOwner=history;spectrumStemsGeneration=audio.decodeGeneration;spectrumAnalyses.clear();
+ }
+ function spectrumChangedStatus(){return audio.buffer||spectrumStemId?'Audio or project changed; analyze again.':'Import backing audio, then analyze its pitched energy.';}
  function renderSpectrum(){
   const host=$('spectrum-view');if(!host||view!=='spectrum')return;
-  if(spectrumAnalysis&&(spectrumAnalysis.generation!==audio.decodeGeneration||spectrumAnalysis.history!==history)){spectrumAnalysis=null;spectrumStatus=audio.buffer?'Audio or project changed; analyze again.':'Import backing audio, then analyze its pitched energy.';}
+  syncSpectrumStems();
+  if(spectrumAnalysis&&(spectrumAnalysis.generation!==audio.decodeGeneration||spectrumAnalysis.history!==history)){spectrumAnalysis=null;spectrumStatus=spectrumChangedStatus();}
   const previous=$('spectrum-scroll'),scrollLeft=previous?.scrollLeft||0,scrollTop=previous?.scrollTop||0,arrangements=project().arrangements;
   for(const a of arrangements)if(a.type!=='drums'&&!spectrumVisibleCharts.has(a.id))spectrumVisibleCharts.set(a.id,true);
   const controls=arrangements.map((a,index)=>a.type==='drums'?`<label title="Drum charts do not contain pitched note positions"><input type="checkbox" disabled>Drums · ${esc(a.name)} (no pitches)</label>`:`<label><input type="checkbox" data-spectrum-chart="${esc(a.id)}" ${spectrumVisibleCharts.get(a.id)!==false?'checked':''}><span class="ws-spectrum-track-color" data-spectrum-color-pick="${esc(a.id)}" data-spectrum-color-index="${index}" style="background:${spectrumColor(a,index)}" title="Right-click to change this chart's colour"></span>${esc(a.name)}</label>`).join('');
+  const stems=spectrumStems(project()),stemOptions=stems.map(stem=>{const failure=spectrumStemFailures.get(stem.id);return `<option value="${esc(stem.id)}" ${stem.id===spectrumStemId?'selected':''} ${failure?'disabled':''} title="${esc(failure||stem.description)}">${esc(stem.label)}${failure?' · unavailable':''}</option>`;}).join('');
+  const stemControl=stems.length?`<label title="Which audio this view analyzes. Playback doesn't change.">Audio <select data-spectrum-stem aria-label="Audio shown in the spectrum"><option value="">Backing track</option>${stemOptions}</select></label>`:'';
   const staffOptions=arrangements.map(a=>`<option value="${esc(a.id)}" ${a.id===arrangementId?'selected':''}>${esc(a.name)} · ${esc(a.type)}</option>`).join('');
-  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${audio.buffer&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button><label>Staff / tab <select data-spectrum-staff aria-label="Arrangement shown on the staff and tab panel">${staffOptions||'<option>No arrangements</option>'}</select></label><label><input type="checkbox" data-spectrum-show-staff ${spectrumShowStaff?'checked':''}>Staff</label><label><input type="checkbox" data-spectrum-show-tab ${spectrumShowTab?'checked':''}>Tab</label><label>Time zoom <input type="range" min="3" max="400" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="3" max="22" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><label title="Fills in bass notes whose fundamental is too weak to detect on its own by also checking their octave and 12th harmonics. Can occasionally show a false note a 5th or an octave away from a real one."><input type="checkbox" data-spectrum-bass-harmonics ${spectrumBassHarmonics?'checked':''}>Bass harmonics</label><label title="Real audio often has genuine, strong content an octave or a 12th above a note (an overdriven bass's own 2nd harmonic, say) — accurate, but noisy if you only care about one instrument's part. This hides a row whenever a note 12 or 19 semitones below it is present, even when this row's own signal is real and strong."><input type="checkbox" data-spectrum-suppress-echo ${spectrumSuppressOctaveEcho?'checked':''}>Hide octave echoes</label><span class="ws-muted" style="flex-basis:100%;font-size:10px">Bass harmonics fills gaps from weak fundamentals, but can occasionally show a false note a 5th or octave away from a real one. Hide octave echoes removes real but likely-redundant content an octave or a 12th above a lower note, useful when focusing on one instrument's part.</span><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays" style="position:sticky;left:0"></canvas><div data-spectrum-spacer style="height:1px"></div></div>`;
-  const next=$('spectrum-scroll');next.scrollLeft=scrollLeft;next.scrollTop=scrollTop;drawSpectrum();
+  host.innerHTML=`<div class="ws-spectrum-controls"><button type="button" data-action="spectrum-analyze" ${(audio.buffer||spectrumStemId)&&!spectrumWorker?'':'disabled'}>${spectrumWorker?'Analyzing audio…':'Analyze audio'}</button>${stemControl}<label>Staff / tab <select data-spectrum-staff aria-label="Arrangement shown on the staff and tab panel">${staffOptions||'<option>No arrangements</option>'}</select></label><label><input type="checkbox" data-spectrum-show-staff ${spectrumShowStaff?'checked':''}>Staff</label><label><input type="checkbox" data-spectrum-show-tab ${spectrumShowTab?'checked':''}>Tab</label><label>Time zoom <input type="range" min="3" max="400" step="1" value="${spectrumZoom}" data-spectrum-zoom><output data-spectrum-zoom-value>${spectrumZoom} px/s</output></label><label>Semitone height <input type="range" min="3" max="22" step="1" value="${spectrumSemitoneHeight}" data-spectrum-semitone-height><output data-spectrum-semitone-value>${spectrumSemitoneHeight} px / semitone</output></label><label title="Fills in bass notes whose fundamental is too weak to detect on its own by also checking their octave and 12th harmonics. Can occasionally show a false note a 5th or an octave away from a real one."><input type="checkbox" data-spectrum-bass-harmonics ${spectrumBassHarmonics?'checked':''}>Bass harmonics</label><label title="Real audio often has genuine, strong content an octave or a 12th above a note (an overdriven bass's own 2nd harmonic, say) — accurate, but noisy if you only care about one instrument's part. This hides a row whenever a note 12 or 19 semitones below it is present, even when this row's own signal is real and strong."><input type="checkbox" data-spectrum-suppress-echo ${spectrumSuppressOctaveEcho?'checked':''}>Hide octave echoes</label><span class="ws-muted" style="flex-basis:100%;font-size:10px">Bass harmonics fills gaps from weak fundamentals, but can occasionally show a false note a 5th or octave away from a real one. Hide octave echoes removes real but likely-redundant content an octave or a 12th above a lower note, useful when focusing on one instrument's part.</span><span class="ws-spectrum-status" id="ws-spectrum-status">${esc(spectrumStatus)}</span></div><div class="ws-spectrum-tracks" aria-label="Arrangement note overlays"><strong>Show chart notes</strong>${controls||'<span class="ws-muted">No arrangements in this project.</span>'}</div><div id="ws-spectrum-scroll" class="ws-spectrum-scroll"><canvas id="ws-spectrum-canvas" tabindex="0" aria-label="Score-aligned audio waveform and pitch energy with arrangement note overlays" style="position:sticky;left:0"></canvas><div data-spectrum-spacer style="height:1px;width:${SPECTRUM_AXIS+Math.max(.1,project().duration)*spectrumZoom}px"></div></div>`;
+  const next=$('spectrum-scroll');next.scrollLeft=scrollLeft;drawSpectrum();next.scrollTop=scrollTop;
  }
  function autoAnalyzeSpectrum(){
-  if(!audio.buffer||spectrumWorker)return;
+  if((!audio.buffer&&!spectrumStemId)||spectrumWorker)return;
   const current=spectrumAnalysis&&spectrumAnalysis.generation===audio.decodeGeneration&&spectrumAnalysis.history===history?spectrumAnalysis:null;
   if(current)return;
   status('Analyzing audio for the spectrum view — this runs in the background and may take a little while for longer songs.');
   analyzeSpectrumAudio().catch(error=>status(error.message,true));
  }
+ function selectSpectrumStem(id){
+  if(spectrumWorker){spectrumWorker.terminate();spectrumWorker=null;spectrumGeneration++;}
+  spectrumStemId=id;spectrumAnalysis=spectrumAnalyses.get(id)||null;
+  if(!id&&!audio.buffer)spectrumStatus='Import backing audio, then analyze its pitched energy.';
+  renderSpectrum();
+  if(!spectrumAnalysis&&(id||audio.buffer))analyzeSpectrumAudio().catch(error=>status(error.message,true));
+ }
  async function analyzeSpectrumAudio(){
-  if(!audio.buffer)throw Error('Import backing audio before analyzing its spectrum');
+  if(!audio.buffer&&!spectrumStemId)throw Error('Import backing audio before analyzing its spectrum');
   if(spectrumWorker)return;
-  const buffer=audio.buffer,owner=history,generation=audio.decodeGeneration,job=++spectrumGeneration,worker=new Worker(new URL('./spectrum-worker.js',import.meta.url),{type:'module'});
-  spectrumWorker=worker;spectrumAnalysis=null;spectrumStatus='Preparing a mono analysis copy…';renderSpectrum();
+  const backing=audio.buffer,stemId=spectrumStemId,owner=history,generation=audio.decodeGeneration,job=++spectrumGeneration,worker=new Worker(new URL('./spectrum-worker.js',import.meta.url),{type:'module'});
+  spectrumWorker=worker;spectrumAnalysis=null;spectrumStatus=stemId?'Decoding the stem…':'Preparing a mono analysis copy…';renderSpectrum();
+  const stale=()=>job!==spectrumGeneration||backing!==audio.buffer||owner!==history;
+  const abandon=()=>{worker.terminate();if(spectrumWorker!==worker)return;spectrumWorker=null;syncSpectrumStems();spectrumStatus=spectrumChangedStatus();renderSpectrum();};
+  let buffer=backing;
+  if(stemId)try{buffer=await decodeStem(project(),stemId,backing?.sampleRate);}catch(error){
+   if(stale())return abandon();
+   worker.terminate();spectrumWorker=null;
+   const message=`The ${spectrumStems(project()).find(stem=>stem.id===stemId)?.label||stemId} stem can't be analyzed: ${error.message}`;
+   spectrumStemFailures.set(stemId,message);spectrumStemId='';spectrumAnalysis=spectrumAnalyses.get('')||null;spectrumStatus=message;renderSpectrum();status(message,true);
+   if(!spectrumAnalysis&&audio.buffer)analyzeSpectrumAudio().catch(failure=>status(failure.message,true));
+   return;
+  }
   const samples=new Float32Array(buffer.length),channels=Array.from({length:buffer.numberOfChannels},(_,index)=>buffer.getChannelData(index)),chunk=262144;
   for(let start=0;start<buffer.length;start+=chunk){
-   if(job!==spectrumGeneration||buffer!==audio.buffer||owner!==history){worker.terminate();if(spectrumWorker===worker)spectrumWorker=null;return;}
+   if(stale())return abandon();
    const end=Math.min(buffer.length,start+chunk);for(let frame=start;frame<end;frame++){let value=0;for(const channel of channels)value+=channel[frame];samples[frame]=value/channels.length;}
    spectrumStatus=`Preparing audio for analysis · ${Math.round(end/buffer.length*100)}%`;const label=$('spectrum-status');if(label)label.textContent=spectrumStatus;await new Promise(resolve=>setTimeout(resolve,0));
   }
-  if(job!==spectrumGeneration||buffer!==audio.buffer||owner!==history){worker.terminate();if(spectrumWorker===worker)spectrumWorker=null;return;}
+  if(stale())return abandon();
+  const useBassHarmonics=spectrumBassHarmonics,suppressOctaveEcho=spectrumSuppressOctaveEcho;
   await new Promise((resolve,reject)=>{
    worker.onmessage=({data})=>{
     if(data.id!==job||job!==spectrumGeneration)return;
     if(data.type==='progress'){spectrumStatus=`Analyzing audio · ${Math.round(data.progress*100)}%`;const label=$('spectrum-status');if(label)label.textContent=spectrumStatus;return;}
     if(data.type==='error'){spectrumWorker=null;worker.terminate();spectrumStatus=`Analysis failed: ${data.message}`;renderSpectrum();reject(Error(data.message));return;}
-    if(data.type==='result'){spectrumWorker=null;worker.terminate();if(buffer!==audio.buffer||owner!==history){spectrumStatus='Audio or project changed during analysis; analyze again.';renderSpectrum();resolve();return;}spectrumAnalysis={...data.result,generation,history:owner};spectrumStatus='Spectrum analysis complete.';renderSpectrum();resolve();}
+    if(data.type==='result'){spectrumWorker=null;worker.terminate();if(backing!==audio.buffer||owner!==history){spectrumStatus='Audio or project changed during analysis; analyze again.';renderSpectrum();resolve();return;}spectrumAnalysis={...data.result,generation,history:owner};if(useBassHarmonics===spectrumBassHarmonics&&suppressOctaveEcho===spectrumSuppressOctaveEcho)spectrumAnalyses.set(stemId,spectrumAnalysis);spectrumStatus='Spectrum analysis complete.';renderSpectrum();resolve();}
    };
    worker.onerror=event=>{if(job!==spectrumGeneration)return;spectrumWorker=null;worker.terminate();spectrumStatus=`Analysis failed: ${event.message||'spectrum worker error'}`;renderSpectrum();reject(Error(spectrumStatus));};
-   worker.postMessage({type:'analyze',id:job,samples,sampleRate:buffer.sampleRate,useBassHarmonics:spectrumBassHarmonics,suppressOctaveEcho:spectrumSuppressOctaveEcho},[samples.buffer]);
+   worker.postMessage({type:'analyze',id:job,samples,sampleRate:buffer.sampleRate,useBassHarmonics,suppressOctaveEcho},[samples.buffer]);
   });
  }
  function render(){
@@ -2141,8 +2171,9 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(e.target.dataset.vocalField){const key=e.target.dataset.vocalField,raw=e.target.value,value=Number(raw);if(key!=='text'&&!(key==='pitch'&&raw==='')&&(!raw.trim()||!Number.isFinite(value)||value<0||(key==='pitch'&&(!Number.isInteger(value)||value>127))))throw Error('Vocal timing must be finite and nonnegative; optional pitch must be an integer0-127');if(key!=='time')changeVocalField('Edit vocal syllable',e.target.dataset.vocalId,key,key==='text'?raw:key==='pitch'&&raw===''?undefined:value);else{pendingVocalSelection=[e.target.dataset.vocalId];change('Edit vocal syllable',p=>{const vocal=p.vocals.find(v=>v.id===e.target.dataset.vocalId);if(!vocal)throw Error('The vocal syllable no longer exists');vocal.time=value;p.vocals.sort((a,b)=>a.time-b.time);});}}
   if(e.target.dataset.spectrumChart!==undefined){spectrumVisibleCharts.set(e.target.dataset.spectrumChart,e.target.checked);drawSpectrum();}
   if(e.target.dataset.spectrumStaff!==undefined){$('arrangement').value=e.target.value;$('arrangement').dispatchEvent(new Event('change',{bubbles:true}));}
-  if(e.target.dataset.spectrumBassHarmonics!==undefined){spectrumBassHarmonics=e.target.checked;if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Bass harmonics setting changed; analyze again.';}persistPreferences();renderSpectrum();}
-  if(e.target.dataset.spectrumSuppressEcho!==undefined){spectrumSuppressOctaveEcho=e.target.checked;if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Octave echo setting changed; analyze again.';}persistPreferences();renderSpectrum();}
+  if(e.target.dataset.spectrumStem!==undefined)selectSpectrumStem(e.target.value);
+  if(e.target.dataset.spectrumBassHarmonics!==undefined){spectrumBassHarmonics=e.target.checked;spectrumAnalyses.clear();if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Bass harmonics setting changed; analyze again.';}persistPreferences();renderSpectrum();}
+  if(e.target.dataset.spectrumSuppressEcho!==undefined){spectrumSuppressOctaveEcho=e.target.checked;spectrumAnalyses.clear();if(spectrumAnalysis){spectrumAnalysis=null;spectrumStatus='Octave echo setting changed; analyze again.';}persistPreferences();renderSpectrum();}
   if(e.target.dataset.spectrumShowStaff!==undefined){spectrumShowStaff=e.target.checked;persistPreferences();drawSpectrum();}
   if(e.target.dataset.spectrumShowTab!==undefined){spectrumShowTab=e.target.checked;persistPreferences();drawSpectrum();}
   updateTonePreview(true);
