@@ -22,9 +22,9 @@ test('the average line follows with a ~300 ms time constant, whatever the frame 
  let s=meterState();for(let i=0;i<90;i++)s=meterStep(s,{rmsDb:-20},1/60,i/60);near(s.rms,-20,.5);
 });
 
-test('clipping holds for the clip window, from the output or the input',()=>{
+test('clipping holds for the clip window; input clipping shows on the input block only',()=>{
  const s=meterStep(meterState(),{peakDb:.2},0,3);assert.equal(s.clipUntil,3+CLIP_S);assert.equal(s.peak,0);
- assert.equal(meterStep(meterState(),{peakDb:-40,inputDb:1},0,3).clipUntil,3+CLIP_S);
+ const hot=meterStep(meterState(),{peakDb:-40,inputDb:1},0,3);assert.equal(hot.clipUntil,0);assert.equal(levelZone(hot.input),'clip');
  assert.equal(meterStep(meterState(),{peakDb:-1},0,3).clipUntil,0);
 });
 

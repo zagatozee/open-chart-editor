@@ -11,7 +11,7 @@ export function meterStep(state,{peakDb,rmsDb,inputDb}={},dt,now){
  s.peak=p>=s.peak?p:Math.max(p,s.peak-DECAY_DB_S*dt);
  if(p>=s.hold||now-s.holdAt>HOLD_S){s.hold=p;s.holdAt=now;}
  s.rms+=(r-s.rms)*(1-Math.exp(-dt*.99/INTEGRATION_S)); // ~300 ms time constant, independent of frame rate
- if(inputDb!==undefined){const i=level(inputDb);if(i>=s.input||now-s.inputAt>INPUT_HOLD_S){s.input=i;s.inputAt=now;}if(inputDb>=0)s.clipUntil=now+CLIP_S;}
+ if(inputDb!==undefined){const i=level(inputDb);if(i>=s.input||now-s.inputAt>INPUT_HOLD_S){s.input=i;s.inputAt=now;}}
  if(peakDb>=0)s.clipUntil=now+CLIP_S;
  return s;
 }

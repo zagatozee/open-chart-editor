@@ -112,14 +112,16 @@ export class AudioEngine {
       this.context = new Context();
     }
     if (!this.buses) {
-      this.buses = {};
+      // Each bus is a unity input (where sources connect, metered before the fader) feeding its fader.
+      this.buses = {};this.faders = {};
       for (const name of Object.keys(this.gains)) {
-        const node = this.context.createGain(); node.gain.value = this.getEffectiveGain(name); this.buses[name] = node;
+        this.buses[name] = this.context.createGain();
+        const fader = this.context.createGain(); fader.gain.value = this.getEffectiveGain(name); this.faders[name] = fader; this.buses[name].connect(fader);
       }
       this.panners = {};
       for(const name of Object.keys(this.gains)) {
         const pan=this.context.createStereoPanner();pan.pan.value=this.pans[name];this.panners[name]=pan;
-        this.buses[name].connect(pan);pan.connect(name==='master'?this.context.destination:this.buses.master);
+        this.faders[name].connect(pan);pan.connect(name==='master'?this.context.destination:this.buses.master);
       }
       const songInput=this.context.createGain();songInput.channelCount=2;songInput.channelCountMode='explicit';songInput.channelInterpretation='speakers';
       const input=this.context.createChannelSplitter(2),output=this.context.createChannelMerger(2);songInput.connect(input);
@@ -225,8 +227,9 @@ export class AudioEngine {
     return this.gains[bus];
   }
   getOutputGain(bus) { return this.getEffectiveGain(bus)*(bus==='master'?1:this.getEffectiveGain('master')); }
-  applyMixer() { if(this.buses)for(const bus of Object.keys(this.gains))this.buses[bus].gain.setTargetAtTime(this.getEffectiveGain(bus),this.context.currentTime,.01); }
-  getBusOutput(bus) { return this.panners?.[bus]||this.buses?.[bus]; }
+  applyMixer() { if(this.faders)for(const bus of Object.keys(this.gains))this.faders[bus].gain.setTargetAtTime(this.getEffectiveGain(bus),this.context.currentTime,.01); }
+  getBusOutput(bus) { return this.panners?.[bus]||this.faders?.[bus]; }
+  getBusInput(bus) { return this.buses?.[bus]; }
   setPan(bus,value) {
     if(!Object.hasOwn(this.pans,bus))throw Error(`Unknown audio bus: ${bus}`);
     this.pans[bus]=clamp(Number(value)||0,-1,1);
@@ -352,5 +355,5 @@ export class AudioEngine {
     }
     this.onTime(this.currentTime);
   }
-  async dispose() { for(const dispose of this.disposers)dispose();this.disposers.clear();this.decodeGeneration++; this.pause(); if (this.context) await this.context.close(); this.context = null; this.drumBuffers?.clear();this.buses = null; this.panners = null; this.songGraph = null; }
+  async dispose() { for(const dispose of this.disposers)dispose();this.disposers.clear();this.decodeGeneration++; this.pause(); if (this.context) await this.context.close(); this.context = null; this.drumBuffers?.clear();this.buses = null; this.faders = null; this.panners = null; this.songGraph = null; }
 }
