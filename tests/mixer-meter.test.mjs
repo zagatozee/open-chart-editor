@@ -26,6 +26,7 @@ test('clipping holds for the clip window; input clipping shows on the input bloc
  const s=meterStep(meterState(),{peakDb:.2},0,3);assert.equal(s.clipUntil,3+CLIP_S);assert.equal(s.peak,0);
  const hot=meterStep(meterState(),{peakDb:-40,inputDb:1},0,3);assert.equal(hot.clipUntil,0);assert.equal(levelZone(hot.input),'clip');
  assert.equal(meterStep(meterState(),{peakDb:-1},0,3).clipUntil,0);
+ assert.equal(meterStep(meterState(),{peakDb:.5,clipDb:-Infinity},0,3).clipUntil,0,'a muted bus shows its level but never flashes clip');
 });
 
 test('the input indicator holds for its own, shorter time',()=>{

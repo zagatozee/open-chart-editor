@@ -6,13 +6,13 @@ export const DECAY_DB_S=23.53,HOLD_S=20,INTEGRATION_S=.3,INPUT_HOLD_S=1,CLIP_S=1
 const level=db=>Number.isFinite(db)?Math.max(MIN_DB,Math.min(0,db)):db>0?0:MIN_DB;
 export const meterState=()=>({peak:MIN_DB,hold:MIN_DB,holdAt:0,rms:MIN_DB,input:MIN_DB,inputAt:0,clipUntil:0});
 // One display step per channel per frame. sample dB values may be -Infinity; dt and now are seconds.
-export function meterStep(state,{peakDb,rmsDb,inputDb}={},dt,now){
+export function meterStep(state,{peakDb,rmsDb,inputDb,clipDb=peakDb}={},dt,now){
  const p=level(peakDb),r=level(rmsDb),s={...state};
  s.peak=p>=s.peak?p:Math.max(p,s.peak-DECAY_DB_S*dt);
  if(p>=s.hold||now-s.holdAt>HOLD_S){s.hold=p;s.holdAt=now;}
  s.rms+=(r-s.rms)*(1-Math.exp(-dt*.99/INTEGRATION_S)); // ~300 ms time constant, independent of frame rate
  if(inputDb!==undefined){const i=level(inputDb);if(i>=s.input||now-s.inputAt>INPUT_HOLD_S){s.input=i;s.inputAt=now;}}
- if(peakDb>=0)s.clipUntil=now+CLIP_S;
+ if(clipDb>=0)s.clipUntil=now+CLIP_S;
  return s;
 }
 export function levelZone(db){return db>=0?'clip':db>=ERR_DB?'err':db>=WARN_DB?'warn':'ok';}

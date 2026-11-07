@@ -2,6 +2,8 @@
 import {createRequire} from 'node:module';
 import {mkdir,writeFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import {faderPosition,faderTopDb} from '../src/mixer-meter.js';
+const fp=(gain,bus)=>String(Math.round(faderPosition(gain,faderTopDb(bus))*1000));
 const require=createRequire(import.meta.url);
 const {chromium}=require(process.env.OCE_PLAYWRIGHT||'C:/Users/zagat/AppData/Roaming/npm/node_modules/rea-agents/node_modules/playwright-core');
 const browser=await chromium.launch({headless:true,executablePath:process.env.OCE_CHROMIUM||'C:/Users/zagat/AppData/Local/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-win64/chrome-headless-shell.exe',args:['--mute-audio','--autoplay-policy=no-user-gesture-required']});
@@ -32,6 +34,8 @@ async function run(name,fn){
  try{const detail=await fn();results.push({name,ok:true,...(detail?{detail}:{})});console.log('PASS',name);}
  catch(error){results.push({name,ok:false,error:error.message,status:await page.locator('#ws-status').textContent().catch(()=>null),newRuntimeErrors:runtimeErrors.slice(before)});console.log('FAIL',name,error.message);if(await page.locator('#ws-dialog[open]').count())await page.locator('#ws-dialog button[value="cancel"]').click().catch(()=>{});}
 }
+async function openMixer(){if(!await page.locator('[data-bus="song"]:visible').count())await action('mixer');}
+async function mixerOutput(bus){return (await page.locator(`[data-mixer-channel="${bus}"]`).getAttribute('title')).match(/output (\d+%)/)[1];}
 async function action(name){
  const locator=page.locator(`[data-action="${name}"]:visible`);
  if(!await locator.count())await page.locator(`[data-action="${name}"]`).first().evaluate(el=>{const details=el.closest('details');if(details)details.open=true;});
@@ -246,11 +250,11 @@ try{
   await action('count-in');await page.locator('#ws-count-in-enabled').uncheck();await submit();const after=await snapshot();assert.deepEqual(after.beats,before.beats);assert.deepEqual(after.arrangements,before.arrangements);return {pauseCancels:true,navigationCancels:true,startCursor:1,sourceTimesUnchanged:true};
  });
  await run('Mixer mute, solo, routing and master retain independent desired faders',async()=>{
-  await load(fixture());await action('mixer');await page.locator('[data-bus="song"]').fill('60');await page.locator('[data-bus="guide"]').fill('40');await page.locator('[data-bus="metronome"]').fill('35');await page.locator('[data-bus="master"]').fill('75');
-  await page.locator('[data-mixer-solo="guide"]').click();assert.equal(await page.locator('[data-mixer-output="song"]').textContent(),'0%');assert.equal(await page.locator('[data-mixer-output="guide"]').textContent(),'30%');assert.equal(await page.locator('[data-bus="song"]').inputValue(),'60');
-  await page.locator('[data-mixer-mute="guide"]').click();assert.equal(await page.locator('[data-mixer-output="guide"]').textContent(),'0%');await page.locator('[data-mixer-mute="guide"]').click();assert.equal(await page.locator('[data-mixer-output="guide"]').textContent(),'30%');
-  await page.locator('[data-mixer-mute="master"]').click();assert.equal(await page.locator('[data-mixer-output="guide"]').textContent(),'0%');await page.locator('[data-mixer-mute="master"]').click();await page.locator('[data-mixer-solo="guide"]').click();
-  if(await page.locator('#ws-click.active').count())await action('metronome');await action('metronome');assert.equal(await page.locator('[data-bus="metronome"]').inputValue(),'35');assert.equal(await page.locator('[data-mixer-output="metronome"]').textContent(),'26%');await action('metronome');assert.equal(await page.locator('[data-bus="metronome"]').inputValue(),'35');assert.equal(await page.locator('[data-mixer-output="metronome"]').textContent(),'0%');return {songDesired:60,guideDesired:40,metronomeDesired:35,master:75};
+  await load(fixture());await openMixer();await page.locator('[data-bus="song"]').fill(fp(.6,'song'));await page.locator('[data-bus="guide"]').fill(fp(.4,'guide'));await page.locator('[data-bus="metronome"]').fill(fp(.35,'metronome'));await page.locator('[data-bus="master"]').fill(fp(.75,'master'));
+  await page.locator('[data-mixer-solo="guide"]').click();assert.equal(await mixerOutput('song'),'0%');assert.equal(await mixerOutput('guide'),'30%');assert.equal(await page.locator('[data-bus="song"]').inputValue(),fp(.6,'song'));
+  await page.locator('[data-mixer-mute="guide"]').click();assert.equal(await mixerOutput('guide'),'0%');await page.locator('[data-mixer-mute="guide"]').click();assert.equal(await mixerOutput('guide'),'30%');
+  await page.locator('[data-mixer-mute="master"]').click();assert.equal(await mixerOutput('guide'),'0%');await page.locator('[data-mixer-mute="master"]').click();await page.locator('[data-mixer-solo="guide"]').click();
+  if(await page.locator('#ws-click.active').count())await action('metronome');await action('metronome');assert.equal(await page.locator('[data-bus="metronome"]').inputValue(),fp(.35,'metronome'));assert.equal(await mixerOutput('metronome'),'26%');await action('metronome');assert.equal(await page.locator('[data-bus="metronome"]').inputValue(),fp(.35,'metronome'));assert.equal(await mixerOutput('metronome'),'0%');return {songDesired:60,guideDesired:40,metronomeDesired:35,master:75};
  });
  await run('Draft recovery after browser reload restores authored notes and audio',async()=>{
   const source=fixture([]);await load(source);await upload();await page.locator('#ws-canvas').click({position:{x:300,y:230}});await page.keyboard.press('8');await page.waitForTimeout(900);
@@ -258,7 +262,7 @@ try{
  });
  await run('Host screen DOM detach/reinsert remounts and retains working project',async()=>{
   const source=fixture();await load(source);await upload();
-  await page.locator('#ws-canvas').click({position:{x:400,y:220}});await page.keyboard.press('8');await page.locator('[data-inspector="properties"]').click();assert.equal(await page.locator('#ws-note-fret').inputValue(),'8');await page.locator('#ws-zoom').fill('140');await page.locator('#ws-snap').selectOption('8');await action('mixer');await page.locator('[data-bus="song"]').fill('57');await page.locator('[data-mixer-mute="song"]').click();await page.locator('[data-mixer-solo="guide"]').click();const before=await snapshot();
+  await page.locator('#ws-canvas').click({position:{x:400,y:220}});await page.keyboard.press('8');await page.locator('[data-inspector="properties"]').click();assert.equal(await page.locator('#ws-note-fret').inputValue(),'8');await page.locator('#ws-zoom').fill('140');await page.locator('#ws-snap').selectOption('8');await openMixer();await page.locator('[data-bus="song"]').fill(fp(.57,'song'));await page.locator('[data-mixer-mute="song"]').click();await page.locator('[data-mixer-solo="guide"]').click();const before=await snapshot();
   await page.evaluate(async()=>{
    window.__deepEmit('screen:changed',{screen:'library'});
    const html=await(await fetch('/')).text(),fragment=new DOMParser().parseFromString(html,'text/html').querySelector('#ws-app');
@@ -266,7 +270,7 @@ try{
    window.__deepEmit('screen:changed',{screen:'open_chart_editor'});
   });
   await page.waitForSelector('#ws-app[data-mounted="true"]');await page.waitForFunction(title=>document.querySelector('#ws-title').textContent.includes(title),source.title);
-  const after=await snapshot();assert.deepEqual(after.arrangements[0].notes,before.arrangements[0].notes);assert.ok(after.audio||after._pack);assert.equal(await page.locator('#ws-zoom').inputValue(),'140');assert.equal(await page.locator('#ws-snap').inputValue(),'8');assert.equal(await page.locator('#ws-note-fret').inputValue(),'8');assert.equal(await page.locator('[data-bus="song"]').inputValue(),'57');assert.equal(await page.locator('[data-mixer-mute="song"]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('[data-mixer-solo="guide"]').getAttribute('aria-pressed'),'true');await action('undo');assert.equal((await snapshot()).arrangements[0].notes.length,12);await action('redo');assert.equal((await snapshot()).arrangements[0].notes.length,13);return {title:after.title,notes:after.arrangements[0].notes.length,selectionRetained:true,undoRetained:true,mixerRetained:true,zoom:140,snap:8};
+  const after=await snapshot();assert.deepEqual(after.arrangements[0].notes,before.arrangements[0].notes);assert.ok(after.audio||after._pack);assert.equal(await page.locator('#ws-zoom').inputValue(),'140');assert.equal(await page.locator('#ws-snap').inputValue(),'8');assert.equal(await page.locator('#ws-note-fret').inputValue(),'8');assert.equal(await page.locator('[data-bus="song"]').inputValue(),fp(.57,'song'));assert.equal(await page.locator('[data-mixer-mute="song"]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('[data-mixer-solo="guide"]').getAttribute('aria-pressed'),'true');await action('undo');assert.equal((await snapshot()).arrangements[0].notes.length,12);await action('redo');assert.equal((await snapshot()).arrangements[0].notes.length,13);return {title:after.title,notes:after.arrangements[0].notes.length,selectionRetained:true,undoRetained:true,mixerRetained:true,zoom:140,snap:8};
  });
  await page.screenshot({path:new URL('browser-deep.png',out).pathname.replace(/^\/([A-Za-z]:)/,'$1'),fullPage:true});
 }finally{
