@@ -38,11 +38,30 @@ try{
  assert.equal(await page.evaluate(()=>document.activeElement?.dataset.mixerMute),'song','focus stays on the Mute button');
  await page.locator('#ws-mixer-float [data-mixer-mute="song"]').click();
 
+ await page.locator('#ws-mixer-float details summary').first().click();
+ await page.locator('#ws-mixer-float [data-mixer-mute="song"]').click();await page.locator('#ws-mixer-float [data-mixer-mute="song"]').click();
+ assert.ok(await page.locator('#ws-mixer-float details').first().evaluate(d=>d.open),'an open section stays open when Mute rebuilds the panel');
+ const pb=await box(),rb=await page.locator('#ws-app').boundingBox();assert.ok(pb.y+pb.height<=rb.y+rb.height+1,'the grown panel stays inside the editor');
+ await page.locator('#ws-mixer-float details summary').first().click();
+ results.push('Mute keeps an open section open, and a grown panel stays inside the editor');
+
+ const fader=page.locator('#ws-mixer-float [data-bus="song"]'),readout=()=>page.locator('#ws-mixer-float [data-mixer-value="song"]').textContent();
+ await fader.focus();const keys=[['End','+6.0 dB'],['ArrowDown','+5.0 dB'],['PageDown','-1.0 dB'],['ArrowUp','0.0 dB'],['Home','-inf dB'],['ArrowUp','-60.0 dB']];
+ for(const [key,want] of keys){await page.keyboard.press(key);assert.equal(await readout(),want,key);}
+ await fader.dblclick();assert.equal(await readout(),'0.0 dB');
+ results.push('fader keys step in dB: arrows 1 dB, Page keys 6 dB, Home -inf, End the top');
+
+ await fader.focus();await page.keyboard.press('Escape');assert.ok(await panel.isHidden(),'Escape closes the panel');
+ assert.equal(await page.evaluate(()=>document.activeElement?.id),'ws-mixer-focus-return','focus returns to the footer Mixer button');
+ await page.keyboard.press('Control+m');await page.waitForSelector('#ws-mixer-float:not([hidden]) [data-mixer-channel="master"]');
+ results.push('Escape closes the panel, focus returns to the footer, Ctrl+M reopens it');
+
  await page.locator('[data-action="mixer-dock"]').click();
  assert.ok(await panel.isHidden(),'Dock hides the floating panel');
  await page.waitForSelector('#ws-bottom-content [data-mixer-channel="master"]');
  await page.locator('#ws-bottom-content [data-action="mixer-float"]').click();
  await page.waitForSelector('#ws-mixer-float:not([hidden]) [data-mixer-channel="master"]');
+ assert.equal(await page.evaluate(()=>document.activeElement?.id),'ws-mixer-float-head','Float moves focus into the panel');
  assert.equal(await page.locator('#ws-bottom-content [data-mixer-channel]').count(),0,'Float leaves the lower panel');
  results.push('Dock and Float move the mixer between the lower panel and the floating panel');
 
