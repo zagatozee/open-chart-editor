@@ -8,7 +8,7 @@ export class SignalMeters{
   if(this.channels.get(name)?.source===node)return;
   this.detach(name);
   if(!node||!context||typeof context.createAnalyser!=='function')return;
-  const splitter=context.createChannelSplitter(2),analysers=[0,1].map(()=>{const analyser=context.createAnalyser();analyser.fftSize=1024;analyser.smoothingTimeConstant=0;return analyser;});
+  const splitter=context.createChannelSplitter(2),analysers=[0,1].map(()=>{const analyser=context.createAnalyser();analyser.fftSize=2048;analyser.smoothingTimeConstant=0;return analyser;});
   node.connect(splitter);analysers.forEach((analyser,index)=>splitter.connect(analyser,index));
   this.channels.set(name,{source:node,splitter,analysers,buffers:analysers.map(analyser=>new Float32Array(analyser.fftSize)),clippedUntil:0});
  }
