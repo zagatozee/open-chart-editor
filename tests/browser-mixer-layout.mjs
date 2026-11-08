@@ -10,16 +10,16 @@ try{
  await page.waitForSelector('#ws-app[data-mounted="true"]');
  await page.locator('footer [data-action="mixer"]').click();
  for(const bus of ['song','guide','metronome','live']){
-  for(const value of ['0','100','200']){
+  for(const value of ['0','500','1000']){
    await page.locator(`[data-bus="${bus}"]`).fill(value);
    const controls=page.locator(`[data-mixer-channel="${bus}"]`);
    const mute=await controls.locator(`[data-mixer-mute="${bus}"]`).boundingBox();
    const solo=await controls.locator(`[data-mixer-solo="${bus}"]`).boundingBox();
    const actions=await controls.locator('.ws-mixer-actions').boundingBox();
-   assert.ok(Math.abs(mute.y-solo.y)<1,`${bus} Solo and Mute stay on the same row at ${value}%`);
-   assert.ok(solo.y>=actions.y&&solo.y+solo.height<=actions.y+actions.height,`${bus} Solo remains inside its fixed action row at ${value}%`);
+   assert.ok(Math.abs(mute.y-solo.y)<1,`${bus} Solo and Mute stay on the same row at fader position ${value}`);
+   assert.ok(solo.y>=actions.y&&solo.y+solo.height<=actions.y+actions.height,`${bus} Solo remains inside its fixed action row at fader position ${value}`);
   }
  }
  assert.deepEqual(errors,[]);
- console.log('PASS: mixer Solo controls stay fixed beside Mute at 0%, 100%, and 200% on every bus');
+ console.log('PASS: mixer Solo controls stay fixed beside Mute from the bottom to the top of every fader');
 }finally{await browser.close();}

@@ -38,8 +38,8 @@ try{
  await page.locator('[data-mixer-mute="song"]').click();
  await page.locator('[data-pan="song"]').fill('-50');
  assert.equal(await page.locator('[data-pan-value="song"]').textContent(),'-50');
- assert.match(await page.locator('[data-signal-value="song"]').textContent(),/dBFS/);
- results.push('Mute, pan and the dBFS readout remain wired on the compact strip');
+ assert.match(await page.locator('[data-signal-meter="song"][data-signal-channel="0"]').getAttribute('aria-label'),/peak dBFS/);
+ results.push('Mute, pan and the labelled stereo meters remain wired on the compact strip');
 
  assert.deepEqual(errors,[],'no page errors');
  console.log(results.map(r=>'ok - '+r).join('\n'));

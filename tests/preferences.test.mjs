@@ -25,3 +25,13 @@ test('invalid live monitor preferences fall back to safe defaults',()=>{
   deviceId:'',engine:'software',tier:'max',frameCount:1024
  });
 });
+
+test('the floating mixer panel position and state round-trip, with safe fallbacks',()=>{
+ const storage=memoryStorage();
+ assert.equal(writePreferences({mixerPanel:{floating:false,open:true,x:120,y:48}},storage),true);
+ assert.deepEqual(readPreferences(storage).mixerPanel,{floating:false,open:true,x:120,y:48});
+ const bad=memoryStorage({'oce.preferences.v1':JSON.stringify({mixerPanel:{floating:'no',open:'yes',x:'left',y:-5}})});
+ assert.deepEqual(readPreferences(bad).mixerPanel,{floating:true,open:false,x:null,y:0});
+ assert.equal(readPreferences(memoryStorage({'oce.preferences.v1':'{}'})).mixerPanel,undefined);
+ assert.equal(readPreferences(memoryStorage({'oce.preferences.v1':JSON.stringify({mixerPanel:[1]})})).mixerPanel,undefined);
+});
