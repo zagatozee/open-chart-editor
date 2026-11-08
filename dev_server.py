@@ -16,7 +16,7 @@ routes.setup(app, {"plugin_dir": str(ROOT)})
 def index():
     screen = (ROOT / "screen.html").read_text(encoding="utf-8")
     return ('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Open Chart Editor · local build</title><link rel="stylesheet" href="/api/plugins/open_chart_editor/assets/editor.css">'
+            '<title>Open Chart Editor · local build</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/api/plugins/open_chart_editor/assets/editor.css">'
             '<style>html,body{margin:0;height:100%;overflow:hidden}body{background:#1c1c20}</style></head><body>'
             + screen + '<script type="module" src="/api/plugins/open_chart_editor/screen.js"></script></body></html>')
 
