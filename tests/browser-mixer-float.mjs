@@ -56,9 +56,21 @@ try{
  await page.keyboard.press('Control+m');await page.waitForSelector('#ws-mixer-float:not([hidden]) [data-mixer-channel="master"]');
  results.push('Escape closes the panel, focus returns to the footer, Ctrl+M reopens it');
 
+ // Both headers: title, then the move button (Dock or Float), then close, at the right end.
+ const header=async selector=>page.locator(selector).evaluate(head=>{const r=head.getBoundingClientRect(),buttons=[...head.querySelectorAll('button')];return {labels:buttons.map(b=>b.textContent),gapRight:Math.round(r.right-buttons.at(-1).getBoundingClientRect().right)};});
+ const floating=await header('#ws-mixer-float-head');
  await page.locator('[data-action="mixer-dock"]').click();
  assert.ok(await panel.isHidden(),'Dock hides the floating panel');
  await page.waitForSelector('#ws-bottom-content [data-mixer-channel="master"]');
+ const docked=await header('#ws-bottom-content .ws-mixer-head');
+ assert.deepEqual([floating.labels,docked.labels],[['Dock','×'],['Float','×']]);assert.ok(Math.abs(floating.gapRight-docked.gapRight)<=8,JSON.stringify({floating,docked}));
+ await page.locator('#ws-bottom-content [data-action="mixer"]').click();
+ assert.equal(await page.locator('#ws-bottom-content [data-mixer-channel]').count(),0,'the docked close button closes the mixer');
+ assert.match(await page.locator('#ws-bottom-content').textContent(),/Error Finder/,'the lower panel returns to the tab shown before');
+ await page.locator('footer [data-action="mixer"]').click();await page.waitForSelector('#ws-bottom-content [data-mixer-channel="master"]');
+ await page.locator('footer [data-action="mixer"]').click();assert.equal(await page.locator('#ws-bottom-content [data-mixer-channel]').count(),0,'the footer Mixer button toggles the docked mixer');
+ await page.locator('footer [data-action="mixer"]').click();await page.waitForSelector('#ws-bottom-content [data-mixer-channel="master"]');
+ results.push('both headers end in the same buttons at the same place; the docked close and Mixer button toggle it');
  await page.locator('#ws-bottom-content [data-action="mixer-float"]').click();
  await page.waitForSelector('#ws-mixer-float:not([hidden]) [data-mixer-channel="master"]');
  assert.equal(await page.evaluate(()=>document.activeElement?.id),'ws-mixer-float-head','Float moves focus into the panel');
