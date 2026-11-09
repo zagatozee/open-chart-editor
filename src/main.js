@@ -446,6 +446,18 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   change('Use GoPlayAlong beat map',p=>applyGrid(p,beats,true));
   status(`Beat map from ${source}: ${beats.length} beats timed to the audio`);
  }
+ // An R+ folder's charts didn't all agree on the song's beat map (rplus_io.py's
+ // _beat_map_choice): let the user see the real numbers behind each candidate and pick.
+ async function offerRplusBeatMapChoice(){
+  const {chosen,clusters}=project()._rplusBeatMapChoice;
+  const row=(cluster,i)=>`<label><input type="radio" name="ws-rplus-beatmap-choice" id="ws-rplus-beatmap-${i}" ${i===chosen?'checked':''}>${esc(cluster.charts.join(', '))} · ${cluster.beats} beats${i===chosen?' (currently applied)':` · ${cluster.agree}/${cluster.compared} beats agree with the applied map, up to ${cluster.driftMax.toFixed(2)} s apart`}</label>`;
+  const html=`<p>These charts don't all agree on the song's beat map. Pick which one is the song's.</p>${clusters.map(row).join('')}<p class="ws-muted">Notes keep their times either way; only the measure/beat grid changes. You can undo this.</p>`;
+  if(!await dialog('Beat map conflict',html,'Continue'))return;
+  const picked=clusters.findIndex((c,i)=>$(`rplus-beatmap-${i}`).checked);
+  if(picked<0||picked===chosen)return;
+  change('Use a different beat map',p=>applyGrid(p,clusters[picked].map,true));
+  status(`Beat map: now using ${clusters[picked].charts.join(', ')} (${clusters[picked].beats} beats)`);
+ }
  // Slide the whole beat map and chart by `offset` seconds as one undoable step.
  function shiftBeatMap(offset){
   if(!Number.isFinite(offset)||Math.abs(offset)<1e-6)return;
@@ -2203,6 +2215,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(request!==openGeneration||history!==owner||projectGeneration!==generation||history.stateId!==state||abort.signal.aborted||!root.isConnected)return;
   await openFile(file,null,{request});
   if(request===openGeneration&&project()._gpaSync)await offerGpaBeatMap();
+  if(request===openGeneration&&project()._rplusBeatMapChoice)await offerRplusBeatMapChoice();
  }));
  on(canvas,'dragover',e=>{if(chordDrag&&e.dataTransfer?.types.includes('application/x-oce-chord')){e.preventDefault();e.dataTransfer.dropEffect='copy';}});
  on(canvas,'drop',safe(e=>{
@@ -2282,7 +2295,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  on($('difficulty'),'change',safe(e=>{const target=Number(e.target.value);countIn.cancel();stopMidi();change('Switch difficulty',()=>{switchDifficulty(arrangement(),target);selection.clear();});}));
  on($('zoom'),'input',e=>setTimelineZoom(Number(e.target.value)));on($('snap'),'change',e=>{snap=Number(e.target.value);draw();});
  on($('speed'),'input',e=>{countIn.cancel();audio.setSpeed(Number(e.target.value)/100);$('speed-value').textContent=`${e.target.value}%`;});on($('pitch'),'change',safe(e=>audio.setPitch(Number(e.target.value))));on($('master'),'input',e=>{audio.setGain('master',Number(e.target.value)/100);renderMixer();});
- on($('open-folder'),'change',safe(async e=>{const files=Array.from(e.target.files||[]);if(!files.length)return;const request=++openGeneration,owner=history,generation=projectGeneration,state=history.stateId;try{const file=await readFolderFiles(files,{signal:abort.signal});if(request!==openGeneration||history!==owner||projectGeneration!==generation||history.stateId!==state||abort.signal.aborted||!root.isConnected)return;await openFile(file,null,{request});if(request===openGeneration&&project()._gpaSync)await offerGpaBeatMap();}finally{e.target.value='';}}));
+ on($('open-folder'),'change',safe(async e=>{const files=Array.from(e.target.files||[]);if(!files.length)return;const request=++openGeneration,owner=history,generation=projectGeneration,state=history.stateId;try{const file=await readFolderFiles(files,{signal:abort.signal});if(request!==openGeneration||history!==owner||projectGeneration!==generation||history.stateId!==state||abort.signal.aborted||!root.isConnected)return;await openFile(file,null,{request});if(request===openGeneration&&project()._gpaSync)await offerGpaBeatMap();if(request===openGeneration&&project()._rplusBeatMapChoice)await offerRplusBeatMapChoice();}finally{e.target.value='';}}));
  on($('open-file'),'change',safe(async e=>{try{if(e.target.files[0])await openFile(e.target.files[0]);}finally{e.target.value='';}}));on($('import-file'),'change',safe(async e=>{try{if(e.target.files[0])await importChart(e.target.files[0]);}finally{e.target.value='';}}));on($('lyrics-file'),'change',safe(async e=>{const file=e.target.files[0];e.target.value='';if(file)await importLyrics(file);}));on($('audio-file'),'change',safe(e=>e.target.files[0]&&uploadAudio(e.target.files[0])));
  on($('tone-file'),'change',safe(async e=>{
   const file=e.target.files[0];if(!file)return;e.target.value='';const request=++toneImportGeneration,owner=history,state=history.stateId,generation=projectGeneration,part=arrangementId,openIntent=openGeneration;

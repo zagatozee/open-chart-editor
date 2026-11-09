@@ -188,6 +188,32 @@ class ReadTests(unittest.TestCase):
         warnings = ' '.join(open_folder()['import_warnings'])
         self.assertIn(f'Official_HumStrum1_{STRUM}_v2.xml has a different beat map from Official_Lead1_{LEAD}_v4.xml', warnings)
 
+    def test_beat_map_conflict_is_reported_as_a_choice(self):
+        # folder()'s own HumStrum chart carries a different step (0.52s) than Lead/Keyboard
+        # (0.5s) - the same disagreement test_own_beat_map_is_reported already exercises as a
+        # warning; it should also surface as a real, numbers-backed choice.
+        project = open_folder()
+        choice = project['_rplusBeatMapChoice']
+        self.assertEqual(len(choice['clusters']), 2)
+        chosen = choice['clusters'][choice['chosen']]
+        self.assertEqual(set(chosen['charts']), {'Lead', 'Keyboard'})
+        self.assertEqual(chosen['agree'], chosen['compared'])  # the song's own grid agrees with itself
+        other = next(c for c in choice['clusters'] if c is not chosen)
+        self.assertEqual(other['charts'], ['HumStrum'])
+        # One fewer than the raw 16 ebeats: the chart's own 0.5s offset pulls its first beat
+        # before 0s, and the applied map (what 'beats'/'map' both describe) drops it - the same
+        # way _normalized_chart already drops it for the song's own chosen grid.
+        self.assertEqual(other['beats'], 15)
+        self.assertLess(other['agree'], other['compared'])
+        self.assertGreater(other['driftMax'], 0.02)
+        self.assertEqual(len(other['map']), 15)
+
+    def test_everyone_agreeing_has_no_beat_map_choice(self):
+        # The unchanged common case: override HumStrum back onto the same map as Lead/Keyboard.
+        entries = folder(**{f'Official_HumStrum1_{STRUM}_v2.xml': chart('HumStrum', 'Bass', STRUM_BODY)})
+        project = e.load_folder_archive(as_zip(entries))
+        self.assertNotIn('_rplusBeatMapChoice', project)
+
     def test_tones_come_from_the_tone_files(self):
         tone, other = 'bbbbbbbb-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000002'
         gear = {'Amp': {'Key': 'Amp_Test', 'Type': 'Amps', 'KnobValues': {'Amp_Test_Gain': 40.0}}}
@@ -250,6 +276,13 @@ class UgcTests(unittest.TestCase):
         self.assertEqual(project['_import']['grid'], f'Official_Lead1_{LEAD}_v4.xml')
         self.assertAlmostEqual(project['beats'][0]['time'], 0.02)
         self.assertFalse([w for w in project['import_warnings'] if w.startswith('UGC_')], 'one song, one beat map: UGC grids are not reported')
+
+    def test_ugc_chart_with_its_own_real_beat_map_is_offered_as_a_choice(self):
+        # A UGC chart deliberately authored on its own beat map is a real alternative, not noise
+        # to exclude - it still shows up as its own selectable cluster.
+        project = open_folder(**{f'UGC_Lead2_{self.UGC_LEAD}_v1.xml': chart('Lead', 'Guitar', LEAD_BODY, beats=ebeats(16, 0.8))})
+        choice = project['_rplusBeatMapChoice']
+        self.assertIn(['Lead 2 (UGC)'], [c['charts'] for c in choice['clusters']])
 
     def test_edited_ugc_chart_keeps_its_prefix_and_number(self):
         project = self.project()

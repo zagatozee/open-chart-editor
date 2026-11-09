@@ -276,6 +276,87 @@ def _nearest_gap(times, t):
     return min((abs(times[j] - t) for j in (i - 1, i) if 0 <= j < len(times)), default=0)
 
 
+def _chart_label(chart):
+    """A short display name for a chart in the beat-map picker: not the full arr['name'] logic
+    (that also folds in the chart's own instrument/role), just enough to tell charts apart."""
+    name, match, root, data = chart
+    source, kind, number = match.group(1), match.group(2), match.group(3)
+    return re.sub(r'^Alt(?=[A-Z])', 'Alt ', kind) + (f' {number}' if number not in ('', '1') else '') + (' (UGC)' if source == 'UGC' else '')
+
+
+def _chart_beats(chart):
+    """A chart's song-shaped beat list (the same shape project['beats'] takes), via the same
+    normalize + load_xml pipeline load_rplus_folder uses to build its own chosen grid."""
+    name, match, root, data = chart
+    normalized, chart_data, _ = _normalized_chart(root, name)
+    if root.findtext('instrument') == 'Keyboard':
+        # Same reason load_rplus_folder strips a keyboard grid chart's own notes before this
+        # parse: only the beat map is wanted here, and piano fingering doesn't fit the fretted
+        # schema load_xml validates.
+        for level in normalized.findall('./levels/level'):
+            for child_tag in ('notes', 'chords', 'anchors', 'handShapes'):
+                child = level.find(child_tag)
+                if child is not None:
+                    child.set('count', '0')
+                    for item in list(child):
+                        child.remove(item)
+        chart_data = ET.tostring(normalized, encoding='utf-8', xml_declaration=True)
+    patched = chart_data.replace(b'<song version="' + root.get('version').encode() + b'"', b'<song version="7"', 1)
+    return pack_io.load_xml(patched)['beats']
+
+
+def _beat_map_clusters(charts):
+    """Group every chart (Official and UGC alike) by mutual beat-map agreement
+    (_beat_maps_agree against each cluster's founding chart). A chart with no ebeats of its own
+    contributes nothing here and is left out, rather than collapsing with every other empty one."""
+    times = [_beat_times(c[2], c[0]) for c in charts]
+    clusters = []
+    for i, t in enumerate(times):
+        if not t:
+            continue
+        for cluster in clusters:
+            if _beat_maps_agree(t, times[cluster[0]]):
+                cluster.append(i)
+                break
+        else:
+            clusters.append([i])
+    return clusters, times
+
+
+def _beat_map_choice(charts, grid, grid_times, grid_beats):
+    """A picker-ready description of every distinct beat map found across `charts`, scored
+    against the one actually chosen (`grid_times`/`grid_beats`) - or None when everyone agrees,
+    which is the common case and costs nothing beyond the clustering pass itself."""
+    clusters, _ = _beat_map_clusters(charts)
+    if len(clusters) < 2:
+        return None
+    rows = []
+    chosen_index = 0
+    for cluster_index, indices in enumerate(clusters):
+        is_chosen = any(charts[i] is grid for i in indices)
+        if is_chosen:
+            chosen_index = cluster_index
+            chart_map = grid_beats
+        else:
+            # The representative's own normalized, offset-applied beats - the same map that
+            # would actually be applied, not the raw ebeats clustering grouped by (which can
+            # carry one extra beat before the chart's own offset pulls it before 0 s).
+            chart_map = _chart_beats(charts[indices[0]])
+        chart_times = [b['time'] for b in chart_map]
+        compared = len(chart_times)
+        agree = sum(1 for t in chart_times if _nearest_gap(grid_times, t) <= 0.02)
+        drift_max = max((_nearest_gap(grid_times, t) for t in chart_times), default=0.0)
+        rows.append({
+            'charts': [_chart_label(charts[i]) for i in indices],
+            'beats': compared,
+            'agree': agree,
+            'compared': compared,
+            'driftMax': round(drift_max, 3),
+            'map': chart_map,
+        })
+    return {'chosen': chosen_index, 'clusters': rows}
+
+
 def load_rplus_folder(entries):
     """Editable project from an R+ song folder's root files."""
     metadata = {}
@@ -331,6 +412,7 @@ def load_rplus_folder(entries):
     project['arrangements'] = []
     project.pop('import_warnings', None)
     warnings, charts_info, grid_times = [], [], [b['time'] for b in base['beats']]
+    beat_map_choice = _beat_map_choice(charts, grid, grid_times, base['beats'])
     tones = _tone_files(entries)
     duration = float(base.get('duration', 0))
     for index, (name, match, root, data) in enumerate(charts):
@@ -412,6 +494,10 @@ def load_rplus_folder(entries):
                           'tones': sorted(n for n in entries if n.startswith('tone_') and n.endswith('.json'))}
     warnings.append('R+ tones, metadata.json and album art are kept unchanged; saving to the R+ folder only adds new chart files')
     project['import_warnings'] = warnings
+    if beat_map_choice is not None:
+        # Transient, like _gpaSync: a hint the client reads once right after import to offer a
+        # choice, never persisted or re-validated on save.
+        project['_rplusBeatMapChoice'] = beat_map_choice
     return pack_io.validate_project(project)
 
 
