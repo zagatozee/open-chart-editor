@@ -12,6 +12,7 @@ export function readPreferences(storage){
   result.pianoPalette=pianoPaletteId(value.pianoPalette);
   result.staveTheme=value.staveTheme==='light'?'light':'dark';
   result.quality=value.quality==='spectral'?'spectral':'fast';
+  result.feedbackSound=value.feedbackSound!==false;
   if(value.viewZoom&&typeof value.viewZoom==='object')result.viewZoom={tab:number(value.viewZoom.tab,25,400,result.zoom),tempo:number(value.viewZoom.tempo,25,400,result.zoom)};
   if(value.laneScales&&typeof value.laneScales==='object')result.laneScales=Object.fromEntries(['guitar','bass','keys','drums'].map(type=>[type,number(value.laneScales[type],.5,4,1)]));
   if(value.rollOrientations&&typeof value.rollOrientations==='object')result.rollOrientations=Object.fromEntries(['keys','drums'].map(type=>[type,value.rollOrientations[type]==='bottom'?'bottom':'left']));
