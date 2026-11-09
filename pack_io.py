@@ -1885,11 +1885,19 @@ def save_feedpak(project,*,vocal_only=False):
             document=_decode_json(entries[member],member)
             warp=_notation_call(_notation_state.beat_warp,notation_decision['retime']['from'],notation_decision['retime']['to'])
             entries[member]=_json(_notation_call(_notation_state.retime_notation,document,warp))
-        authored_type=str((original_arr.get('_entry') or {}).get('type','')).strip()
+        # The live instrument label (edited via the "Instrument label" field, main.js) is the
+        # authoritative source when it says something real. _arrangement() falls back to the
+        # generic family word itself ('keys') when a file carried no instrument of its own, so
+        # that placeholder carries no signal - _entry.type (the manifest's own original `type`,
+        # e.g. 'piano') is the better fallback for a part that was never retagged.
+        instrument_label=str(arr.get('instrument') or '').strip()
+        authored_type=instrument_label if instrument_label and instrument_label.lower()!='keys' else str((original_arr.get('_entry') or {}).get('type','')).strip()
         song_level = bool(entry.get('_songLevel'))
         primary_alias = bool(entry.pop('_primaryDrumAlias',False))
-        # A keys part keeps the instrument type it was authored with (piano, organ, ...).
-        kind='vocals' if vocal_only else authored_type if arr.get('type')=='keys' and authored_type.lower() in KEYS_FAMILY_TYPES else arr.get('type','guitar')
+        # A keys part keeps the instrument type it was authored with (piano, violin, ...),
+        # so a future highway plugin keyed on manifest `type` can match it. Only the words this
+        # format itself reserves (guitar/bass/drums/vocals/keys) fall back to the generic family.
+        kind='vocals' if vocal_only else authored_type if arr.get('type')=='keys' and authored_type and authored_type.lower() not in RESERVED_TYPES else arr.get('type','guitar')
         entry.update(id=arr['id'], name=arr.get('name', arr['id']), type=kind)
         raw = copy.deepcopy(arr.get('_wire', {}))
         if 'guideVoice' in arr:
@@ -1986,6 +1994,17 @@ def save_feedpak(project,*,vocal_only=False):
             else:
                 raw['tones'] = tones
         entries[_path(filename)] = _json(raw)
+        if not drums and arr.get('type')=='keys' and 'notation' not in entry:
+            # No notation was imported/retained for this part (see notation_decision above) -
+            # synthesize one from scratch when its instrument plays from a single stave, so a
+            # notation-keyed highway plugin (e.g. a bowed-strings one) can show it too.
+            clef=_NOTATION_CLEFS.get(str(arr.get('instrument') or '').strip().lower())
+            if clef:
+                document=_build_notation_document(arr,project,clef)
+                if document is not None:
+                    notation_filename=f"notation_{arr['id']}.json"
+                    entries[_path(notation_filename)]=_json(document)
+                    entry['notation']=notation_filename
         if drums:
             authored=_snapshot_arrangement(original_arr)
             drum_authoring.append({'id':arr['id'],'drum_tab':filename,'sha256':hashlib.sha256(entries[filename]).hexdigest(),'authoring':{field:copy.deepcopy(authored[field]) for field in DRUM_AUTHORING_FIELDS if field in authored}})
@@ -3875,7 +3894,11 @@ def core_notation():
     return _CORE_NOTATION or None
 
 
-KEYS_FAMILY_TYPES=('keys','piano','keyboard','organ','synth','electric piano')
+# Manifest `type` words this format itself reserves for a non-keys-family part. Any other
+# word on a keys-family arrangement is treated as that arrangement's own instrument tag (open-
+# ended: violin, viola, cello, flute, ... so a future highway plugin keyed on `type` can match
+# it), not just a fixed whitelist of known keyboard-family names.
+RESERVED_TYPES=('guitar','bass','drums','vocals')
 # Instrument labels for pitched (non-fretted, non-drum) parts, so the stave can use the
 # instrument's own clef and written transposition. Names win; a GM program is the fallback.
 _INSTRUMENT_WORDS=(('piccolo','piccolo'),('pan flute','pan flute'),('flute','flute'),('recorder','recorder'),
@@ -3906,6 +3929,109 @@ def pitched_instrument(name,program=None):
         if 76<=program<=79:return 'flute'
         if 80<=program<=103:return 'synth'
     return 'keys'
+
+
+# Feedpak clef id (spec 7.6: G2/F4/C3/C4) per single-line pitched instrument label, matching
+# src/stave-view.js's MELODIC table (treble->G2, bass->F4, alto->C3). Instruments not listed
+# here (piano, organ, synth, electric piano, generic "keys") stay on today's two-stave grand
+# staff and get no generated notation document — this table only covers instruments playable
+# from one line, which is what a notation_<id>.json single-stave document assumes.
+_NOTATION_CLEFS={
+    'flute':'G2','piccolo':'G2','recorder':'G2','pan flute':'G2','oboe':'G2','english horn':'G2',
+    'clarinet':'G2','bass clarinet':'G2','bassoon':'F4','soprano sax':'G2','alto sax':'G2',
+    'tenor sax':'G2','baritone sax':'G2','saxophone':'G2','trumpet':'G2','french horn':'G2',
+    'trombone':'F4','tuba':'F4','violin':'G2','viola':'C3','cello':'F4','contrabass':'F4',
+    'harp':'G2','glockenspiel':'G2','xylophone':'G2','vibraphone':'G2','voice':'G2','strings':'G2',
+}
+_NOTATION_DUR_CODES=(1,2,4,8,16,32)
+
+
+def _project_measures(project):
+    """[{idx,t,ts,tempo}] from project.beats ({time,measure}; a measure>0 beat is a downbeat).
+    ts assumes a quarter-note beat unit (OCE's beat grid is always in quarters); tempo is the
+    local beat spacing. Real, never guessed: every measure's t is an authored beat's own time."""
+    beats=sorted((b for b in project.get('beats') or [] if isinstance(b,dict) and isinstance(b.get('time'),(int,float))),key=lambda b:b['time'])
+    downbeats=[(i,b) for i,b in enumerate(beats) if isinstance(b.get('measure'),int) and b['measure']>0]
+    measures=[]
+    for k,(i,b) in enumerate(downbeats):
+        next_i=downbeats[k+1][0] if k+1<len(downbeats) else len(beats)
+        count=max(1,next_i-i)
+        if i+1<len(beats):
+            span=(beats[next_i]['time']-b['time']) if k+1<len(downbeats) else (beats[i+1]['time']-b['time'])*count
+        else:
+            span=0
+        tempo=round(60.0*count/span,3) if span>0 else 120.0
+        measures.append({'idx':b['measure'],'t':float(b['time']),'ts':[count,4],'tempo':tempo})
+    return measures
+
+
+def _quantize_dur(seconds,tempo):
+    """Nearest standard note value (whole=1 .. 32nd=32) for a real duration at a given tempo.
+    v1 simplification: no dotted or tied notes (see the handover doc's own open point on
+    preferring one note over a tied pair). This only affects engraving - the note's own `t` is
+    always the real onset time, never derived from this guess, so playback sync is unaffected."""
+    if not (isinstance(seconds,(int,float)) and seconds>0) or not (isinstance(tempo,(int,float)) and tempo>0):return 16
+    whole_seconds=240.0/tempo
+    fraction=seconds/whole_seconds
+    if fraction<=0:return 32
+    raw=1.0/fraction
+    return min(_NOTATION_DUR_CODES,key=lambda d:abs(d-raw))
+
+
+def _pitched_notes_for_notation(arr):
+    """[(time, midi, sustain)] for a keys-family arrangement, from plain notes and chord
+    children alike, sorted by onset then pitch."""
+    out=[]
+    for n in arr.get('notes') or []:
+        pitch=n.get('pitch')
+        if isinstance(pitch,int) and not isinstance(pitch,bool) and 0<=pitch<=127:
+            out.append((float(n.get('time',0) or 0),pitch,max(0.0,float(n.get('sustain',0) or 0))))
+    for chord in arr.get('chords') or []:
+        ctime=chord.get('time',chord.get('t',0))
+        for note in chord.get('notes') or []:
+            child=_chord_child(note,ctime,keys=True)
+            pitch=child.get('pitch')
+            if isinstance(pitch,int) and not isinstance(pitch,bool) and 0<=pitch<=127:
+                out.append((float(child.get('time',ctime) or 0),pitch,max(0.0,float(child.get('sustain',0) or 0))))
+    out.sort(key=lambda row:(row[0],row[1]))
+    return out
+
+
+def _build_notation_document(arr,project,clef):
+    """A spec section 7.6 notation_<id>.json for a single-line pitched arrangement: real
+    seconds on every measure and note (section 4 of the handover doc this followed), so any
+    highway plugin keyed on an arrangement's `type` and notation can show it."""
+    measures=_project_measures(project)
+    if not measures:return None
+    notes=_pitched_notes_for_notation(arr)
+    if not notes:return None
+    stave_id='a'
+    doc_measures=[]
+    for i,measure in enumerate(measures):
+        start=measure['t']
+        end=measures[i+1]['t'] if i+1<len(measures) else float('inf')
+        row={'idx':measure['idx'],'t':start,'ts':measure['ts']}
+        if i==0:
+            signature=arr.get('keySignature') if isinstance(arr.get('keySignature'),dict) else None
+            ks=signature.get('fifths') if signature else 0
+            row['ks']=ks if isinstance(ks,int) and -7<=ks<=7 else 0
+        row['tempo']=measure['tempo']
+        clustered=[]
+        for time,midi,sustain in notes:
+            if time<start or time>=end:continue
+            if clustered and abs(time-clustered[-1]['t'])<=1e-6:
+                clustered[-1]['notes'].append({'midi':midi})
+                clustered[-1]['_sustain']=max(clustered[-1]['_sustain'],sustain)
+            else:
+                clustered.append({'t':time,'notes':[{'midi':midi}],'_sustain':sustain})
+        if not clustered:continue
+        beats=[{'t':b['t'],'dur':_quantize_dur(b['_sustain'],measure['tempo']),'notes':b['notes']} for b in clustered]
+        row['staves']={stave_id:{'voices':[{'v':1,'beats':beats}]}}
+        doc_measures.append(row)
+    if not doc_measures:return None
+    return {'version':1,'instrument':arr.get('instrument') or 'keys','staves':[{'id':stave_id,'clef':clef,'label':arr.get('name','')}],'measures':doc_measures}
+
+
 MAJOR_FIFTHS={'Cb':-7,'Gb':-6,'Db':-5,'Ab':-4,'Eb':-3,'Bb':-2,'F':-1,'C':0,'G':1,'D':2,'A':3,'E':4,'B':5,'F#':6,'C#':7,'G#':8,'D#':9,'A#':10}
 MAJOR_BY_FIFTHS={value:name for name,value in MAJOR_FIFTHS.items() if -7<=value<=7}
 MINOR_BY_FIFTHS={-7:'Abm',-6:'Ebm',-5:'Bbm',-4:'Fm',-3:'Cm',-2:'Gm',-1:'Dm',0:'Am',1:'Em',2:'Bm',3:'F#m',4:'C#m',5:'G#m',6:'D#m',7:'A#m'}
@@ -3967,7 +4093,7 @@ def _notation_only_arrangement(entry,notation,index):
     notation_to_notes, so its notes are the ones FeedBack plays. None when the part is
     not a keys part or core's rule is unavailable."""
     kind=str(entry.get('type','')).strip().lower()
-    if kind not in KEYS_FAMILY_TYPES:return None
+    if not kind or kind in RESERVED_TYPES:return None
     core=core_notation()
     if core is None:return None
     rows=core.notation_to_notes(notation)
