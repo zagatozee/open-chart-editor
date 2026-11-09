@@ -14,10 +14,9 @@ const EOF_JUNK=/\.(bak|lastsaved|backup|psarc)$/i;
 // (SongFilesBackuper), separate from the live project.rscp - skip that whole subtree the same
 // way EOF's own loose backup files are skipped, when the folder is actually Charter-shaped.
 const CHARTER_JUNK=/^backups\//i;
-export function folderSelection(files){
- const list=Array.from(files||[]);if(!list.length||list.length>MAX_FILES)throw Error('Choose a song folder with at most 4096 files');
- const parsed=[];let root;
- for(const file of list){const name=folderEntryName(file.webkitRelativePath),parts=name.split('/');if(parts.length<2)throw Error('Select a folder rather than individual files');if(root&&root!==parts[0])throw Error('Select one song folder');root=parts.shift();parsed.push({path:parts.join('/'),file});}
+// Shared by both front ends below: junk-filtering and validation (size/count limits, case
+// collisions) over an already-parsed, root-stripped {path, file} list.
+function buildEntries(parsed,root){
  const isEofFolder=parsed.some(e=>e.path==='notes.eof');
  const isCharterFolder=parsed.some(e=>!e.path.includes('/')&&e.path.toLowerCase().endsWith('.rscp'));
  const entries=[],seen=new Set();let total=0;
@@ -28,11 +27,68 @@ export function folderSelection(files){
  }
  return {name:root,entries};
 }
-export async function readFolderFiles(files,{fetcher=globalThis.fetch,FileClass=globalThis.File,signal}={}){
- const {name,entries}=folderSelection(files),form=new FormData();for(const entry of entries)form.append('files',entry.file,entry.path);
+// Front end for the <input webkitdirectory> picker: a flat FileList, each File carrying its
+// own full relative path (including the chosen folder's own name) in webkitRelativePath.
+export function folderSelection(files){
+ const list=Array.from(files||[]);if(!list.length||list.length>MAX_FILES)throw Error('Choose a song folder with at most 4096 files');
+ const parsed=[];let root;
+ for(const file of list){const name=folderEntryName(file.webkitRelativePath),parts=name.split('/');if(parts.length<2)throw Error('Select a folder rather than individual files');if(root&&root!==parts[0])throw Error('Select one song folder');root=parts.shift();parsed.push({path:parts.join('/'),file});}
+ return buildEntries(parsed,root);
+}
+// Recursively reads one dropped directory entry into the same {path, file} shape folderSelection
+// builds, validating each full path the same way. readEntries() is not required to return a
+// directory's whole contents in one call, so it is read in a loop until it comes back empty.
+async function walk(entry,root,prefix,parsed,signal){
+ signal?.throwIfAborted();
+ folderEntryName(root+'/'+prefix+entry.name);
+ if(entry.isFile){
+  const file=await new Promise((resolve,reject)=>entry.file(resolve,reject));
+  parsed.push({path:prefix+entry.name,file});
+  return;
+ }
+ const reader=entry.createReader();
+ for(;;){
+  signal?.throwIfAborted();
+  const batch=await new Promise((resolve,reject)=>reader.readEntries(resolve,reject));
+  if(!batch.length)break;
+  for(const child of batch){
+   if(parsed.length>=MAX_FILES)throw Error('Choose a song folder with at most 4096 files');
+   await walk(child,root,prefix+entry.name+'/',parsed,signal);
+  }
+ }
+}
+// Front end for a drag-and-drop DataTransfer: exactly one dropped entry, and it must be a
+// directory (a file dropped on its own, or several items at once, is rejected the same way
+// folderSelection rejects anything but one folder).
+export async function droppedFolderSelection(dataTransfer,{signal}={}){
+ const items=Array.from(dataTransfer?.items||[]).filter(item=>item.kind==='file');
+ const dropped=items.map(item=>item.webkitGetAsEntry?.()).filter(Boolean);
+ if(dropped.length!==1||!dropped[0].isDirectory)throw Error('Drop one song folder');
+ const root=folderEntryName(dropped[0].name);
+ const parsed=[],reader=dropped[0].createReader();
+ for(;;){
+  signal?.throwIfAborted();
+  const batch=await new Promise((resolve,reject)=>reader.readEntries(resolve,reject));
+  if(!batch.length)break;
+  for(const child of batch){
+   if(parsed.length>=MAX_FILES)throw Error('Choose a song folder with at most 4096 files');
+   await walk(child,root,'',parsed,signal);
+  }
+ }
+ if(!parsed.length)throw Error('That folder has no files');
+ return buildEntries(parsed,root);
+}
+async function uploadFolderEntries({name,entries},{fetcher=globalThis.fetch,FileClass=globalThis.File,signal}={}){
+ const form=new FormData();for(const entry of entries)form.append('files',entry.file,entry.path);
  const response=await fetcher('/api/plugins/open_chart_editor/folder-source',{method:'POST',body:form,signal});
  if(!response.ok){let text=await response.text();try{text=JSON.parse(text).detail||text;}catch{}throw Error(text);}
  const blob=await response.blob();if(blob.size>LIMIT)throw Error('Song folder transport exceeds the import limit');return new FileClass([blob],name+'.oce-folder.zip',{type:'application/zip'});
+}
+export async function readFolderFiles(files,opts={}){
+ return uploadFolderEntries(folderSelection(files),opts);
+}
+export async function readDroppedFolder(dataTransfer,opts={}){
+ return uploadFolderEntries(await droppedFolderSelection(dataTransfer,opts),opts);
 }
 export async function decodeFolderTree(tree,{crypto=globalThis.crypto}={}){
  if(tree?.version!==1||!Array.isArray(tree.entries)||!tree.entries.length||tree.entries.length>MAX_FILES)throw Error('Invalid folder export');

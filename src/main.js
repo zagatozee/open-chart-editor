@@ -35,7 +35,7 @@ import {openContextMenu} from './context-menu.js';
 import {mountMenubar} from './menubar.js';
 import {chooseProjectFile} from './open-dialog.js';
 import {OrderedSaves} from './ordered-saves.js';
-import {readFolderFiles,writeFolderTree} from './folder-files.js';
+import {readFolderFiles,readDroppedFolder,writeFolderTree} from './folder-files.js';
 import {techniqueTags,techniqueEnabled,setTechniqueFlag} from './technique-tags.js';
 import {manageArrangement} from './arrangements.js';
 import {assignHands} from './piano-hands.js';
@@ -113,7 +113,7 @@ function mount(root){
  let countInOptions={enabled:false,bars:1,beats:null};
  const countIn=new CountIn({audio,onTick:event=>{status(`Count-in ${event.index+1} / ${event.total}`);$('play').textContent='■';},onState:()=>updateClock()});
  let chordZoneOptions={lengthBeats:1,gutterBeats:0,fingerprintOnly:false},selectedChordTemplate=0,chordLibrarySort='created',selectedZoneIndex=null;
- let chordDrag=null,suppressChordClickUntil=0;
+ let chordDrag=null,suppressChordClickUntil=0,folderDropDepth=0;
  let viewZoom={tab:110,tempo:110},timelineView='tab',laneScales={guitar:1,bass:1,keys:1,drums:1},rollOrientations={keys:'left',drums:'left'};
  let sustainOptions={clampNext:false,gutterEnabled:false,gutterBeats:.125},sustainProvenance=new WeakMap();
  // Keyboard profile, the user's per-profile changes and the 'each note on its own' option.
@@ -2190,6 +2190,20 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  function insertChord(index,options={}){selectedChordTemplate=index;change('Insert chord zone',()=>{const result=insertChordZone(arrangement(),project().beats,index,quantize(cursor),{...chordZoneOptions,...options});selection=new Set(result.notes.map(n=>n.id));selectedZoneIndex=arrangement().handshapes.indexOf(result.zone);});}
  on(root,'dragstart',safe(e=>{const tile=e.target.closest('[data-chord]');if(!tile||!e.dataTransfer)return;chordDrag={token:uid(),generation:projectGeneration,arrangementId,index:Number(tile.dataset.chord)};suppressChordClickUntil=performance.now()+500;e.dataTransfer.setData('application/x-oce-chord',chordDrag.token);e.dataTransfer.effectAllowed='copy';}));
  on(root,'dragend',()=>{chordDrag=null;suppressChordClickUntil=performance.now()+250;});
+ // A dragged-in OS folder (song data, not the internal chord drag above, which carries its own
+ // MIME type and never 'Files'): same destination as File > Open song folder…
+ on(root,'dragenter',e=>{if(!e.dataTransfer?.types.includes('Files'))return;folderDropDepth++;root.classList.add('ws-drop-active');});
+ on(root,'dragover',e=>{if(!e.dataTransfer?.types.includes('Files'))return;e.preventDefault();e.dataTransfer.dropEffect='copy';});
+ on(root,'dragleave',()=>{if(--folderDropDepth<=0){folderDropDepth=0;root.classList.remove('ws-drop-active');}});
+ on(root,'drop',safe(async e=>{
+  if(!e.dataTransfer?.types.includes('Files'))return;
+  e.preventDefault();folderDropDepth=0;root.classList.remove('ws-drop-active');
+  const request=++openGeneration,owner=history,generation=projectGeneration,state=history.stateId;
+  const file=await readDroppedFolder(e.dataTransfer,{signal:abort.signal});
+  if(request!==openGeneration||history!==owner||projectGeneration!==generation||history.stateId!==state||abort.signal.aborted||!root.isConnected)return;
+  await openFile(file,null,{request});
+  if(request===openGeneration&&project()._gpaSync)await offerGpaBeatMap();
+ }));
  on(canvas,'dragover',e=>{if(chordDrag&&e.dataTransfer?.types.includes('application/x-oce-chord')){e.preventDefault();e.dataTransfer.dropEffect='copy';}});
  on(canvas,'drop',safe(e=>{
   if(!chordDrag||e.dataTransfer?.getData('application/x-oce-chord')!==chordDrag.token)return;

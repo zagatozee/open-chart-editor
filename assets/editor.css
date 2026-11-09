@@ -31,6 +31,7 @@
 .ws-app{--ws-vu-ok:#4cff4c;--ws-vu-warn:#ffff4c;--ws-vu-err:#ff4c4c;--ws-vu-ok-dim:#267f26;--ws-vu-warn-dim:#7f7f26;--ws-vu-err-dim:#7f2626;--ws-vu-rms:#000;--ws-vu-clip:#fff}
 .ws-mixer-channel.muted{--ws-vu-ok:#a3a3a3;--ws-vu-warn:#d9d9d9;--ws-vu-err:#717171;--ws-vu-ok-dim:#5a5a5a;--ws-vu-warn-dim:#757575;--ws-vu-err-dim:#414141}
 .ws-app{position:relative}
+.ws-app.ws-drop-active::after{content:"Drop song folder to open";position:absolute;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:#1c1c20cc;border:3px dashed var(--ws-blue);color:#d8dae3;font-size:20px;pointer-events:none}
 .ws-mixer-float{position:absolute;z-index:30;max-width:calc(100% - 16px);max-height:calc(100% - 40px);overflow:auto;background:var(--ws-panel);border:1px solid var(--ws-edge);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
 .ws-mixer-float-head{display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-bottom:1px solid var(--ws-edge);cursor:move;user-select:none;touch-action:none}.ws-mixer-float-head span,.ws-mixer-head span{flex:1;font-weight:600}.ws-mixer-float-head button,.ws-mixer-head button{padding:1px 8px;min-width:0}
 .ws-bottom h3.ws-mixer-head{display:flex;align-items:center;gap:6px;padding:5px 6px 5px 14px}

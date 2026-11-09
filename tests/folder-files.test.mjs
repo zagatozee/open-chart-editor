@@ -1,13 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto,createHash} from 'node:crypto';
-import {folderSelection,decodeFolderTree,writeFolderTree} from '../src/folder-files.js';
+import {folderSelection,droppedFolderSelection,decodeFolderTree,writeFolderTree} from '../src/folder-files.js';
 const entry=(path,text)=>{const data=Buffer.from(text);return{path,size:data.length,sha256:createHash('sha256').update(data).digest('hex'),base64:data.toString('base64')};};
+// Minimal fakes for the FileSystemEntry tree a DataTransferItem.webkitGetAsEntry() hands back,
+// shaped just enough for droppedFolderSelection's own walk (readEntries in a loop, file() by
+// callback) - no real DOM or filesystem involved.
+const fakeFile=(name,size=1)=>({isFile:true,isDirectory:false,name,file:resolve=>resolve({name,size})});
+const fakeDir=(name,children)=>({isFile:false,isDirectory:true,name,createReader(){let done=false;return{readEntries(resolve){if(done){resolve([]);return;}done=true;resolve(children);}};}});
+const dropped=(...entries)=>({items:entries.map(e=>({kind:'file',webkitGetAsEntry:()=>e}))});
 const tree=()=>({version:1,entries:[entry('manifest.yaml','own manifest'),entry('audio/own.wav','own audio\0')]});
 test('folder selection retains one root and relative names with bounded bytes',()=>{
  const own=(name,size=1)=>({webkitRelativePath:name,size});
  assert.deepEqual(folderSelection([own('Own/manifest.yaml'),own('Own/audio/full.wav')]).entries.map(e=>e.path),['manifest.yaml','audio/full.wav']);
  for(const files of [[own('Own/a'),own('Other/b')],[own('Own/A'),own('Own/a')],[own('Own/../x')],[own('Own/a',256*1024*1024+1)]])assert.throws(()=>folderSelection(files));
+});
+test('a dropped folder builds the same path shape as the input picker, through nested subfolders',async()=>{
+ const tree=fakeDir('Own',[fakeFile('manifest.yaml'),fakeDir('audio',[fakeFile('full.wav')])]);
+ assert.deepEqual((await droppedFolderSelection(dropped(tree))).entries.map(e=>e.path),['manifest.yaml','audio/full.wav']);
+});
+test('a drop is refused unless it is exactly one directory',async()=>{
+ await assert.rejects(droppedFolderSelection(dropped(fakeFile('a.txt'))));
+ await assert.rejects(droppedFolderSelection(dropped(fakeDir('Own',[]),fakeDir('Other',[]))));
+ await assert.rejects(droppedFolderSelection(dropped()));
+});
+test('a dropped folder with no files is refused',async()=>{
+ await assert.rejects(droppedFolderSelection(dropped(fakeDir('Own',[]))));
+});
+test('a dropped EOF project folder skips its own accumulated junk the same way the input picker does',async()=>{
+ const tree=fakeDir('Song',[fakeFile('notes.eof'),fakeFile('guitar.wav'),fakeFile('notes.backup.eof.bak')]);
+ assert.deepEqual((await droppedFolderSelection(dropped(tree))).entries.map(e=>e.path),['notes.eof','guitar.wav']);
+});
+test('dropped folder entries are still bounded by the same size and unsafe-name checks',async()=>{
+ await assert.rejects(droppedFolderSelection(dropped(fakeDir('Own',[fakeFile('big.wav',256*1024*1024+1)]))));
+ await assert.rejects(droppedFolderSelection(dropped(fakeDir('Own',[fakeDir('..',[fakeFile('a')])]))));
+ const many=Array.from({length:4097},(_,i)=>fakeFile('f'+i));
+ await assert.rejects(droppedFolderSelection(dropped(fakeDir('Own',many))));
 });
 test('an EOF project folder (has notes.eof) skips its own accumulated backup/export junk; a non-EOF folder does not',()=>{
  const own=(name,size=1)=>({webkitRelativePath:name,size});
