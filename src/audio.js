@@ -188,11 +188,11 @@ export class AudioEngine {
     this.schedule(); this.timer = setInterval(() => this.schedule(), 25);
   }
   pause() {
-    if (this.playing) this.position = this.currentTime;
+    const wasPlaying=this.playing;if (this.playing) this.position = this.currentTime;
     this.playing = false; this.preparing=false;this.generation++;this.grainAligner.reset();this.spectral?.stop();this.spectral=null;this.effectiveQuality='fast';
     clearInterval(this.timer); this.timer = null;
     for (const node of this.nodes) { try { node.stop(); } catch {} }
-    this.nodes.clear(); this.feedback.update(0); this.onTime(this.position);
+    this.nodes.clear(); this.feedback.pause(wasPlaying); this.onTime(this.position);
   }
   stop() { this.pause(); this.position = 0; this.onTime(0); }
   seek(seconds) {

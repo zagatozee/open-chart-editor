@@ -46,7 +46,7 @@ test('the sound follows the tone binding, the guide instrument and the fallback'
 });
 
 function fakeEngine(arrangement){
- return {arrangement,project:{rigLibrary:{rigs:[]}},playing:false,pitch:0,currentTime:0,loop:{enabled:false,start:0,end:4},gain:.25,getOutputGain(){return this.gain;}};
+ return {arrangement,project:{rigLibrary:{rigs:[]}},playing:false,pitch:0,position:0,currentTime:0,startedAt:0,context:{currentTime:100},loop:{enabled:false,start:0,end:4},gain:.25,getOutputGain(){return this.gain;}};
 }
 test('it takes over from the first Play after the sound bank loads',async()=>{
  let release;const {host,calls}=fakeHost({ready:new Promise(resolve=>release=resolve)}),engine=fakeEngine(keys([{time:1,pitch:60,sustain:.5}]));
@@ -73,7 +73,7 @@ test('mute, pause, other parts and the switch stop it',async()=>{
  engine.gain=0;calls.length=0;guide.update(1);assert.deepEqual(calls,[['update',NaN,0]],'muted or soloed away');
  engine.gain=.25;calls.length=0;guide.update(0);assert.deepEqual(calls,[['update',NaN,0]],'paused');
  engine.playing=false;calls.length=0;guide.update(1);assert.deepEqual(calls,[['update',NaN,0]],'not playing');
- engine.playing=true;guide.setEnabled(false);assert.equal(guide.active,false);assert.deepEqual(calls.at(-1),['stop']);
+ engine.playing=true;guide.setEnabled(false);calls.length=0;guide.update(1);assert.deepEqual(calls,[['stop']],'switched off');
  guide.setEnabled(true);engine.arrangement={type:'guitar',notes:[],chords:[]};calls.length=0;guide.update(1);
  assert.equal(guide.active,false);assert.deepEqual(calls,[['stop']]);
  guide.destroy();assert.deepEqual(calls.at(-1),['destroy']);
@@ -117,4 +117,36 @@ test('disposing the engine leaves no FeedBack part behind',async()=>{
  const engine=new AudioEngine(),{host,calls}=fakeHost();engine.feedback=new FeedbackGuide(engine,host);
  engine.setProject({duration:8},keys([]));await engine.dispose();
  assert.deepEqual(calls.map(c=>c[0]),['create','destroy']);
+});
+
+test('a Play elsewhere than the pause stops first; resuming in place does not',async()=>{
+ const {host,calls}=fakeHost(),engine=fakeEngine(keys([{time:1,pitch:60}]));
+ const guide=new FeedbackGuide(engine,host);guide.update(0);await flush();guide.begin();engine.playing=true;guide.update(1);
+ engine.playing=false;engine.position=1.2;guide.pause(true);guide.pause(false);calls.length=0;guide.begin();assert.deepEqual(calls,[],'resume in place, through play()\'s own pause');
+ engine.playing=true;guide.update(1);engine.playing=false;guide.pause(true);engine.position=1.0;guide.pause(false);calls.length=0;guide.begin();assert.deepEqual(calls,[['stop']],'a seek back while paused, then Play');
+});
+test('a loop wrap, the start lead, the tone lookahead and a rounded rate',async()=>{
+ const {host,calls}=fakeHost(),engine=fakeEngine(keys([{time:1,pitch:60}],{tones:{base_rig:'a',changes:[{time:2.05,rig:'b'}]}}));
+ const guide=new FeedbackGuide(engine,host);guide.update(0);await flush();guide.begin();engine.playing=true;
+ engine.position=1;engine.startedAt=100.025;calls.length=0;guide.update(1);
+ assert.ok(Math.abs(calls.find(c=>c[0]==='update')[1]-.975)<1e-9,'before the transport starts, time runs up to the cursor');
+ engine.startedAt=0;engine.currentTime=2;calls.length=0;guide.update(1.004);
+ assert.deepEqual(calls.find(c=>c[0]==='sound')[1].identity,{rig:'b'},'resolved where core schedules');assert.equal(calls.find(c=>c[0]==='update')[2],1);
+ engine.currentTime=1.7;calls.length=0;guide.update(1);assert.deepEqual(calls.map(c=>c[0]),['stop','sound','update'],'a wrap is a seek');
+});
+test('a rejected guide instrument leaves the part to OCE, which is silent for it',()=>{
+ const {host}=fakeHost(),engine=fakeEngine(keys([],{guideVoice:{version:1,family:'organ',program:3}}));
+ assert.equal(new FeedbackGuide(engine,host).available,false);
+ engine.arrangement=keys([],{guideVoice:{version:1,family:'organ',program:17}});assert.equal(new FeedbackGuide(engine,host).available,true);
+});
+test('a host that throws mid-run falls back to OCE instead of breaking the transport',async()=>{
+ const {host}=fakeHost(),engine=fakeEngine(keys([{time:1,pitch:60}]));host.soundResolver={version:1,resolveSound(){throw Error('host bug');}};
+ const guide=new FeedbackGuide(engine,host);guide.update(0);await flush();guide.begin();engine.playing=true;
+ assert.doesNotThrow(()=>guide.update(1));assert.equal(guide.active,false);
+});
+test('switched on while the bank is already loaded, the next restart uses it',()=>{
+ const {host,calls}=fakeHost({ready:new Promise(()=>{})}),engine=fakeEngine(keys([{time:1,pitch:60}]));
+ const guide=new FeedbackGuide(engine,host);guide.enabled=false;guide.setEnabled(true);
+ host.synth.voices=()=>[];guide.begin();assert.equal(guide.active,false,'bank still loading');
+ host.synth.voices=()=>[{bank:0,program:0}];guide.begin();assert.equal(guide.active,true);
 });
