@@ -6,6 +6,7 @@ import {drumSamples,drumGain,drumFades,drumPiece} from './drum-guide.js';
 import { notePitch } from './model.js';
 import {PointIndex,IntervalIndex} from './viewport.js';
 import {guideNotes,guideDuration,guidePlan,guideTables} from './guide-synthesis.js';
+import {FeedbackGuide} from './feedback-sound.js';
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 export const midiFrequency = (midi,cents=0) => 440 * 2 ** ((midi - 69) / 12+cents/1200);
@@ -102,7 +103,7 @@ export class AudioEngine {
     this.songFX = {bypass:false,channel:'stereo',eq:[0,0,0,0,0]};
     this.disposers = new Set();
     this.nodes = new Set(); this.timer = null; this.generation = 0; this.decodeGeneration = 0;
-    this.grainAligner=new GrainAligner();
+    this.grainAligner=new GrainAligner();this.feedback=new FeedbackGuide(this);
     this.window = Float32Array.from({ length: 128 }, (_, i) => 0.5 * (1 - Math.cos(2 * Math.PI * i / 127)));
   }
   async init(resume = true) {
@@ -154,7 +155,7 @@ export class AudioEngine {
   }
   setProject(project, arrangement = null) {
     this.project = project; this.arrangement = arrangement || project?.arrangements?.[0] || null;
-    this.guideIndex=null;this.guideTails=null;this.guidePlans=new Map();this.beatIndex=null;
+    this.guideIndex=null;this.guideTails=null;this.guidePlans=new Map();this.beatIndex=null;this.feedback.prepare();
   }
   clearAudio() { this.decodeGeneration++; this.pause(); this.buffer = null; this.peaks = null; this.position = 0; }
   get audioDuration() { return this.buffer?.duration || 0; }
@@ -183,7 +184,7 @@ export class AudioEngine {
       finally{if(generation===this.generation)this.preparing=false;}
     }
     this.startedAt = this.context.currentTime + 0.025;if(this.effectiveQuality==='spectral')this.startedAt=this.spectral.start(this.startedAt);this.nextGrain = this.startedAt;
-    this.playing = true;this.guideContinue=true; this.lastGuideTime = this.position - 0.000001;
+    this.feedback.begin();this.playing = true;this.guideContinue=true; this.lastGuideTime = this.position - 0.000001;
     this.schedule(); this.timer = setInterval(() => this.schedule(), 25);
   }
   pause() {
@@ -191,7 +192,7 @@ export class AudioEngine {
     this.playing = false; this.preparing=false;this.generation++;this.grainAligner.reset();this.spectral?.stop();this.spectral=null;this.effectiveQuality='fast';
     clearInterval(this.timer); this.timer = null;
     for (const node of this.nodes) { try { node.stop(); } catch {} }
-    this.nodes.clear(); this.onTime(this.position);
+    this.nodes.clear(); this.feedback.update(0); this.onTime(this.position);
   }
   stop() { this.pause(); this.position = 0; this.onTime(0); }
   seek(seconds) {
@@ -328,7 +329,7 @@ export class AudioEngine {
     if(this.getOutputGain('guide') > 0&&!this.guideIndex){
     const notes=guideNotes(this.arrangement||{});this.guideIndex=new PointIndex(notes);this.guideTails=new IntervalIndex(notes,{end:n=>n.time+guideDuration(n,this.arrangement?.type)});this.guidePlans=new Map();
     }
-    if (this.getOutputGain('guide') > 0) {
+    if (this.getOutputGain('guide') > 0&&!this.feedback.active) {
      const notes=[...this.guideIndex.between(from,to),...(continueTails?this.guideTails.between(from,from).map(row=>row.item).filter(n=>n.time<from-1e-8&&n.time+guideDuration(n,this.arrangement?.type)>from+1e-8):[])];
      for (const note of notes) {
       const time=Math.max(from,note.time),eventAt=at+(time-from)/Math.max(1e-7,to-from)*wallDuration,offset=Math.max(0,time-note.time);
@@ -355,7 +356,8 @@ export class AudioEngine {
       const at = this.nextGrain, from = this.timeAtContext(at), to = this.timeAtContext(at + 0.02);
       if(this.effectiveQuality!=='spectral')this.grain(at, from); this.scheduleGuide(from, to, at, 0.02,this.guideContinue);this.guideContinue=false; this.nextGrain += 0.02;
     }
+    this.feedback.update(speedAtTime(Math.max(0,now-this.startedAt),this.speed,this.ramp));
     this.onTime(this.currentTime);
   }
-  async dispose() { for(const dispose of this.disposers)dispose();this.disposers.clear();this.decodeGeneration++; this.pause(); if (this.context) await this.context.close(); this.context = null; this.drumBuffers?.clear();this.buses = null; this.faders = null; this.panners = null; this.gates = null; this.songGraph = null; }
+  async dispose() { for(const dispose of this.disposers)dispose();this.disposers.clear();this.feedback.destroy();this.decodeGeneration++; this.pause(); if (this.context) await this.context.close(); this.context = null; this.drumBuffers?.clear();this.buses = null; this.faders = null; this.panners = null; this.gates = null; this.songGraph = null; }
 }
