@@ -29,6 +29,11 @@ export function readPreferences(storage){
    };
   }
   if(value.countIn&&typeof value.countIn==='object')result.countIn={enabled:value.countIn.enabled===true,bars:Math.round(number(value.countIn.bars,1,16,1)),beats:value.countIn.beats==null?null:Math.round(number(value.countIn.beats,1,64,4))};
+  result.folderBrowserVisible=value.folderBrowserVisible===true;
+  result.folderBrowserWidth=number(value.folderBrowserWidth,160,4000,260);
+  result.folderBrowserHumstrum=value.folderBrowserHumstrum!==false;
+  result.folderBrowserQuery=typeof value.folderBrowserQuery==='string'&&value.folderBrowserQuery.length<=256?value.folderBrowserQuery:'';
+  if(value.folderBrowserFilter&&typeof value.folderBrowserFilter==='object'&&!Array.isArray(value.folderBrowserFilter)&&value.folderBrowserFilter.type==='group')result.folderBrowserFilter=value.folderBrowserFilter;
   return result;
  }catch{return{};}
 }

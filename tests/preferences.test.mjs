@@ -35,3 +35,27 @@ test('the floating mixer panel position and state round-trip, with safe fallback
  assert.equal(readPreferences(memoryStorage({'oce.preferences.v1':'{}'})).mixerPanel,undefined);
  assert.equal(readPreferences(memoryStorage({'oce.preferences.v1':JSON.stringify({mixerPanel:[1]})})).mixerPanel,undefined);
 });
+
+test('the folder-browser panel state, quick search and advanced filter round-trip across a reload',()=>{
+ const storage=memoryStorage();
+ const folderBrowserFilter={type:'group',mode:'all',id:'g1',children:[{type:'format',op:'is',value:'eof',id:'c1'}]};
+ assert.equal(writePreferences({folderBrowserVisible:true,folderBrowserWidth:320,folderBrowserHumstrum:false,folderBrowserQuery:'cradle',folderBrowserFilter},storage),true);
+ const read=readPreferences(storage);
+ assert.equal(read.folderBrowserVisible,true);
+ assert.equal(read.folderBrowserWidth,320);
+ assert.equal(read.folderBrowserHumstrum,false);
+ assert.equal(read.folderBrowserQuery,'cradle');
+ assert.deepEqual(read.folderBrowserFilter,folderBrowserFilter);
+});
+
+test('folder-browser preferences fall back to safe defaults when absent or malformed',()=>{
+ const empty=readPreferences(memoryStorage({'oce.preferences.v1':'{}'}));
+ assert.equal(empty.folderBrowserVisible,false);
+ assert.equal(empty.folderBrowserWidth,260);
+ assert.equal(empty.folderBrowserHumstrum,true);
+ assert.equal(empty.folderBrowserQuery,'');
+ assert.equal(empty.folderBrowserFilter,undefined);
+ const bad=readPreferences(memoryStorage({'oce.preferences.v1':JSON.stringify({folderBrowserQuery:123,folderBrowserFilter:{type:'not-a-group'}})}));
+ assert.equal(bad.folderBrowserQuery,'');
+ assert.equal(bad.folderBrowserFilter,undefined);
+});

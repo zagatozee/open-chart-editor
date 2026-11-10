@@ -63,6 +63,13 @@ except ImportError:
     _folder_spec.loader.exec_module(folder_io)
 
 try:
+    from . import folder_browser
+except ImportError:
+    _browser_spec=importlib.util.spec_from_file_location('open_chart_editor_folder_browser',Path(__file__).with_name('folder_browser.py'))
+    folder_browser=importlib.util.module_from_spec(_browser_spec)
+    _browser_spec.loader.exec_module(folder_browser)
+
+try:
     from . import at5_vst3
 except ImportError:
     _at5_spec=importlib.util.spec_from_file_location('open_chart_editor_at5_vst3',Path(__file__).with_name('at5_vst3.py'))
@@ -106,6 +113,7 @@ def setup(app, context=None):
     app.state.open_chart_editor_registered = True
     library_source.install_library_source(app,context or {},max_bytes=pack_io.MAX_BYTES)
     folder_io.install_folder_source(app,max_bytes=pack_io.MAX_BYTES)
+    folder_browser.install_folder_browser(app,context or {},max_bytes=pack_io.MAX_BYTES)
     # TemporaryDirectory owns only this plugin's random local scratch directory.
     scratch = tempfile.TemporaryDirectory(prefix='open-chart-editor-')
     app.state.open_chart_editor_scratch = scratch
