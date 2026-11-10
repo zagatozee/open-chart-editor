@@ -1963,7 +1963,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   applyLayout();
   const a=arrangement();$('title').textContent=`${project().artist} — ${project().title}`;$('dirty').textContent=dirty?'●':'';
   $('arrangement').innerHTML=project().arrangements.map(x=>`<option value="${esc(x.id)}" ${x.id===a.id?'selected':''}>${esc(x.name)} · ${esc(x.type)}${x.editorOnly?' · editor only':''}${x.locked?' · locked':''}${x.hidden?' · hidden':''}</option>`).join('');[...$('arrangement').options].forEach((option,i)=>{if(project().arrangements[i]?.hidden)option.style.color='#7c8190';});
-  $('difficulty').innerHTML=(a.difficulties?.length?a.difficulties:[{difficulty:0,notes:a.notes}]).map(l=>`<option value="${l.difficulty}" ${l.difficulty===(a.activeDifficulty??0)?'selected':''}>Level ${l.difficulty} · ${l.notes?.length||0} notes</option>`).join('');
+  $('difficulty').innerHTML=(a.difficulties?.length?a.difficulties:[{difficulty:0,notes:a.notes,chords:a.chords}]).map(l=>`<option value="${l.difficulty}" ${l.difficulty===(a.activeDifficulty??0)?'selected':''}>Level ${l.difficulty} · ${(l.notes?.length||0)+(l.chords?.length||0)} notes</option>`).join('');
   root.dataset.view=view;
   for(const mode of ['tab','tempo','tones','vocals','spectrum'])$(`${mode}-button`)?.classList.toggle('active',view===mode);
   $('tempo-tools').hidden=view!=='tempo';canvas.hidden=['tones','vocals','spectrum'].includes(view);$('tone-view').hidden=view!=='tones';$('vocal-view').hidden=view!=='vocals';$('spectrum-view').hidden=view!=='spectrum';spacer.hidden=['tones','vocals','spectrum'].includes(view);
