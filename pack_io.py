@@ -2259,6 +2259,14 @@ def load_xml(data,authoring_layout=None):
     # real EOF/toolkit export was found with its top five DD levels truncated to a fraction of
     # the real chart). OCE has no DD authoring of its own yet, so it reads the full track.
     transcription = root.find('./transcriptionTrack')
+    # Some exporters write a present-but-empty <transcriptionTrack/> placeholder next to a
+    # <levels><level> that holds the real chart. Treating that stub as authoritative would
+    # silently import a chart with zero notes/chords, so an empty transcriptionTrack only wins
+    # when the level is empty too - any real content in it still takes priority over a stub.
+    def _has_content(track):
+        return track.find('./notes/note') is not None or track.find('./chords/chord') is not None
+    if transcription is not None and not _has_content(transcription) and _has_content(level):
+        transcription = None
     source = transcription if transcription is not None else level
     count = authoring_layout.get('stringCount',6) if authoring_layout else eof_strings or len(BASES[kind])
     tuning = root.find('tuning')
