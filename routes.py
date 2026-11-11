@@ -101,9 +101,9 @@ def is_wwise_audio(path):
     if head[:4]!=b'RIFF' or head[8:12]!=b'WAVE':return False
     return Path(path).suffix.lower()=='.wem' or head[12:16]==b'fmt ' and head[20:22]==b'\xff\xff'
 
-MAX_AUDIO = 128 * 1024 * 1024
+MAX_AUDIO = 4 * 1024 * 1024 * 1024
 AUDIO_EXTENSIONS = {'.wav', '.ogg', '.mp3', '.flac', '.opus', '.m4a', '.aac', '.wem'}
-MAX_CACHE = 512 * 1024 * 1024
+MAX_CACHE = 8 * 1024 * 1024 * 1024
 
 
 def setup(app, context=None):

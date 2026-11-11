@@ -32,7 +32,10 @@ export function treeRows(node,{path='',depth=0,humstrumVisible=true}={}){
  if(node.kind==='song')return[{kind:'song',name:node.name,path,depth,format:node.format,categories:visibleCategories(node.tags,humstrumVisible),audio:!!node.tags?.audio}];
  if(node.error)return[{kind:'error',name:node.name,depth,message:node.error}];
  const children=node.children||[];
- return[{kind:'group',name:node.name,depth},...children.flatMap(child=>treeRows(child,{path:path?`${path}/${child.name}`:child.name,depth:depth+1,humstrumVisible}))];
+ // A packaged single-file leaf (e.g. a .feedpak archive) is listed under its
+ // real filename, not its display name (which is the stem, with no
+ // extension) - the path sent back to /folder-open must name the real file.
+ return[{kind:'group',name:node.name,depth},...children.flatMap(child=>{const segment=child.file||child.name;return treeRows(child,{path:path?`${path}/${segment}`:segment,depth:depth+1,humstrumVisible});})];
 }
 
 // --- Advanced filter: a nested AND/OR tree over format + tag conditions -----
@@ -114,8 +117,15 @@ export function filterGroupHtml(node,{esc=s=>String(s??''),depth=0}={}){
   `<div class="ws-filter-children">${rows||'<p class="ws-folder-empty">No conditions - matches every song</p>'}</div></div>`;
 }
 
-export function createFolderBrowser({fetcher=fetch,esc=s=>String(s??''),onOpenFolder,onError,onQueryChange}={}){
+export function createFolderBrowser({fetcher=fetch,esc=s=>String(s??''),onOpenFolder,onError,onQueryChange,onToggleInclude}={}){
  let roots=[],trees=new Map(),humstrumVisible=true,loading=new Set(),query='',filter=emptyFilterGroup();
+ // Chart Combiner mode (issue #33): while active, every song row gets an
+ // inclusion checkbox instead of only being clickable to open/replace the
+ // project - isIncluded decides its checked state (driven by the caller's
+ // own set of chosen sources, not tracked here).
+ let combinerMode=false,isIncluded=()=>false;
+ function setCombinerMode(enabled){combinerMode=!!enabled;}
+ function setIncluded(predicate){isIncluded=typeof predicate==='function'?predicate:()=>false;}
  async function loadRoots(){
   try{const response=await fetcher('/api/plugins/open_chart_editor/folder-roots');const data=await response.json();roots=Array.isArray(data?.roots)?data.roots:[];}
   catch(error){onError?.(`Could not read working-folder roots: ${error.message}`);roots=[];}
@@ -147,7 +157,10 @@ export function createFolderBrowser({fetcher=fetch,esc=s=>String(s??''),onOpenFo
   if(row.kind==='error')return `<li class="ws-folder-error" style="padding-left:${row.depth*10}px">${esc(row.name)}: ${esc(row.message)}</li>`;
   const dots=row.categories.map(dot).join('');
   const warning=row.audio?'':'<span class="ws-folder-warning" title="No audio file found in this folder">No audio</span>';
-  return `<li class="ws-folder-song" style="padding-left:${row.depth*10}px" data-open="${esc(`${rootIndex}:${row.path}`)}" tabindex="0" role="button"><span class="ws-folder-name">${esc(row.name)}</span><span class="ws-folder-dots">${dots}</span>${row.format?`<span class="ws-folder-format">${esc(FORMAT_LABEL[row.format]||row.format)}</span>`:''}${warning}</li>`;
+  const path=`${rootIndex}:${row.path}`;
+  const include=combinerMode?`<input type="checkbox" data-include="${esc(path)}" ${isIncluded(path)?'checked':''} title="Include in the Chart Combiner">`:'';
+  const openAttr=combinerMode?'':`data-open="${esc(path)}" tabindex="0" role="button"`;
+  return `<li class="ws-folder-song" style="padding-left:${row.depth*10}px" ${openAttr}>${include}<span class="ws-folder-name">${esc(row.name)}</span><span class="ws-folder-dots">${dots}</span>${row.format?`<span class="ws-folder-format">${esc(FORMAT_LABEL[row.format]||row.format)}</span>`:''}${warning}</li>`;
  }
  function render(container){
   if(!roots.length){container.innerHTML='<p class="ws-folder-empty">No working folders configured yet.</p><button data-action="folder-browser-configure" class="ws-wide">Configure folders…</button>';return;}
@@ -165,11 +178,12 @@ export function createFolderBrowser({fetcher=fetch,esc=s=>String(s??''),onOpenFo
    `<label class="ws-folder-humstrum"><input type="checkbox" data-action="folder-browser-humstrum" ${humstrumVisible?'checked':''}>Show HumStrum/AltRhythm</label>`+
    `<button data-action="folder-browser-configure" class="ws-wide">Configure folders…</button>`;
   for(const row of container.querySelectorAll('[data-open]'))row.addEventListener('click',()=>onOpenFolder?.(row.dataset.open));
+  for(const box of container.querySelectorAll('[data-include]'))box.addEventListener('change',()=>onToggleInclude?.(box.dataset.include,box.checked));
   const search=container.querySelector('[data-role="query"]');
   search?.addEventListener('input',()=>{setQuery(search.value);render(container);search.focus();search.selectionStart=search.selectionEnd=search.value.length;onQueryChange?.(query);});
   container.querySelector('[data-role="clear-filter"]')?.addEventListener('click',()=>{setQuery('');setFilter(emptyFilterGroup());render(container);onQueryChange?.(query);});
  }
- return {loadRoots,saveRoots,setHumstrumVisible,setQuery,setFilter,
+ return {loadRoots,saveRoots,setHumstrumVisible,setQuery,setFilter,setCombinerMode,setIncluded,
   get roots(){return roots;},get humstrumVisible(){return humstrumVisible;},get query(){return query;},get filter(){return filter;},
   render};
 }

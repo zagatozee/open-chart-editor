@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import stat
 import yaml
+import zipfile
 from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException
@@ -28,6 +29,10 @@ MAX_ENTRIES_PER_LISTING = 20000
 # Same set routes.py guards uploaded audio with; duplicated here (not imported)
 # to avoid a routes.py <-> folder_browser.py import cycle.
 AUDIO_EXTENSIONS = {'.wav', '.ogg', '.mp3', '.flac', '.opus', '.m4a', '.aac', '.wem'}
+# Single-file packaged song archives (library_source.py's own EXTENSIONS) -
+# these sit as individual files in a folder, not folders themselves, so they
+# need their own leaf detection separate from the loose-folder formats above.
+FEEDPAK_ARCHIVE_EXTENSIONS = {'.feedpak', '.sloppak'}
 
 CATEGORIES = ('lead', 'rhythm', 'bass', 'vocals', 'piano', 'drums', 'other')
 
@@ -216,6 +221,28 @@ def _sniff_feedpak(directory, names):
     return tags
 
 
+def _sniff_feedpak_archive(path):
+    """A single packaged .feedpak/.sloppak file: same manifest-only reading
+    as _sniff_feedpak, just from inside the zip instead of loose files on
+    disk - these are OCE's own native save format, so this is the most
+    common leaf shape a real library actually has, not an edge case."""
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        for candidate in ('manifest.yaml', 'manifest.yml'):
+            if candidate in names:
+                manifest = yaml.safe_load(archive.read(candidate).decode('utf-8-sig'))
+                break
+        else:
+            candidate = 'manifest.json' if 'manifest.json' in names else 'source-manifest.json'
+            if candidate not in names:
+                raise FolderBrowserError(f'{path.name} has no recognizable manifest')
+            manifest = json.loads(archive.read(candidate).decode('utf-8-sig'))
+        tags = _feedpak_manifest_tags(manifest if isinstance(manifest, dict) else {})
+        if any(Path(name).suffix.lower() in AUDIO_EXTENSIONS for name in names):
+            tags['audio'] = True
+    return tags
+
+
 _CHARTER_KIND = {'Bass': 'bass', 'Lead': 'lead', 'Rhythm': 'rhythm', 'Combo': 'lead'}
 
 
@@ -276,6 +303,12 @@ def _list_one(directory, budget):
     children = []
     for name, is_dir in sorted(names):
         if not is_dir:
+            if Path(name).suffix.lower() in FEEDPAK_ARCHIVE_EXTENSIONS:
+                try:
+                    tags = _sniff_feedpak_archive(directory / name)
+                except (FolderBrowserError, zipfile.BadZipFile, OSError, ValueError, KeyError):
+                    continue  # an unreadable archive just doesn't show up, same as an unreadable subfolder
+                children.append({'name': Path(name).stem, 'kind': 'song', 'format': 'feedpak', 'tags': tags, 'file': name})
             continue
         child_path = directory / name
         try:
@@ -288,15 +321,19 @@ def _list_one(directory, budget):
 def resolve_song_folder(root, segments):
     """Walk plain path segments (as handed back by list_tree's own node names)
     down from a configured root, refusing symlinks/escapes at every step -
-    the same discipline folder_io._plain already applies to uploaded folders."""
+    the same discipline folder_io._plain already applies to uploaded folders.
+    The final segment may name a directory (a loose song folder) or a single
+    packaged file (a .feedpak/.sloppak archive leaf) - every segment before
+    it must still be a directory."""
     directory = Path(root).resolve(strict=True)
     current = directory
-    for segment in segments:
+    for index, segment in enumerate(segments):
         if not isinstance(segment, str) or not segment or segment in ('.', '..') or '/' in segment or '\\' in segment:
             raise FolderBrowserError('Invalid working-folder path segment')
         current = current / segment
         folder_io._plain(current, directory)
-        if not current.is_dir():
+        last = index == len(segments) - 1
+        if not current.is_dir() and not (last and current.is_file()):
             raise FolderBrowserError('That working folder no longer exists')
     return current
 
@@ -337,10 +374,17 @@ def install_folder_browser(app, context=None, *, max_bytes):
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(roots) or not isinstance(segments, list):
             raise HTTPException(400, 'Invalid folder-open request')
         try:
-            directory = await asyncio.to_thread(resolve_song_folder, roots[index], segments)
-            data = await asyncio.to_thread(folder_io.snapshot_directory, directory, max_bytes)
+            resolved = await asyncio.to_thread(resolve_song_folder, roots[index], segments)
+            if resolved.is_file():
+                if resolved.suffix.lower() not in FEEDPAK_ARCHIVE_EXTENSIONS:
+                    raise FolderBrowserError('Only packaged song archives can be opened directly')
+                if resolved.stat().st_size > max_bytes:
+                    raise FolderBrowserError('This archive exceeds the OCE import limit')
+                data = await asyncio.to_thread(resolved.read_bytes)
+            else:
+                data = await asyncio.to_thread(folder_io.snapshot_directory, resolved, max_bytes)
         except (FolderBrowserError, folder_io.FolderError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
-        return Response(data, media_type='application/zip', headers={'Cache-Control': 'no-store'})
+        return Response(data, media_type='application/octet-stream', headers={'Cache-Control': 'no-store'})
 
     return get_roots, set_roots, get_tree, open_song_folder

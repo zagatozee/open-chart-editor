@@ -15,7 +15,7 @@ import {MAX_VOCAL_EVENTS,createVocalIndex,planVocalMove,planVocalResize,copyVoca
 import {deriveDrumLayout,drumGuideCue} from './drum-layout.js';
 import {parseGpaSync,gpaBeatMap,notesOnGrid} from './gpa-sync.js';
 import {clone,uid,TECHNIQUES,SECTIONS,DRUMS,History,makeProject,demoProject,makeArrangement,normalizeProject,makeNote,notePitch,pitches as standardPitches,setStringOffset,beatAt,timeAt,snapTime,setTempo,applyGrid,shiftTimeline,extendGrid,setStringCount,chordFromSelection,matchingChordTemplate,updateChordTemplate,synchronizeChordVoicings,validate} from './model.js';
-import {AudioEngine} from './audio.js';
+import {AudioEngine,encodeWav} from './audio.js';
 import {LiveInput} from './live-input.js';
 import {createAt5LiveEffect,prepareAt5Worklet} from './vst3-live-effect.js';
 import {MidiAudition} from './midi-audition.js';
@@ -38,7 +38,8 @@ import {chooseProjectFile} from './open-dialog.js';
 import {OrderedSaves} from './ordered-saves.js';
 import {readFolderFiles,readDroppedFolder,writeFolderTree} from './folder-files.js';
 import {INSTRUMENT_COLORS} from './instrument-colors.js';
-import {createFolderBrowser,filterGroupHtml,emptyFilterGroup,makeFormatCondition,makeTagCondition,updateFilterNode,addFilterChild,removeFilterNode} from './folder-browser.js';
+import {createFolderBrowser,filterGroupHtml,emptyFilterGroup,makeFormatCondition,makeTagCondition,updateFilterNode,addFilterChild,removeFilterNode,TAG_LABEL} from './folder-browser.js';
+import {sourceSections,buildCombinedProject,PART_CATEGORIES} from './chart-combiner.js';
 import {techniqueTags,techniqueEnabled,setTechniqueFlag} from './technique-tags.js';
 import {manageArrangement} from './arrangements.js';
 import {assignHands} from './piano-hands.js';
@@ -154,14 +155,48 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
  let mixerPanel={floating:true,open:false,x:null,y:null},bottomBeforeMixer='errors';
  let inspectorVisible=true,inspectorWidth=280,bottomHeight=155,bottomVisible=true,closeContextMenu=null,coverGeneration=0,shadeHands=false,pianoPalette='oce';
  let folderBrowserVisible=false,folderBrowserWidth=260;
- const folderBrowser=createFolderBrowser({esc,onOpenFolder:path=>safe(openFolderBrowserPath)(path),onError:message=>status(message,true),onQueryChange:()=>persistPreferences()});
- async function openFolderBrowserPath(path){
-  const request=++openGeneration,owner=history,generation=projectGeneration;
+ const folderBrowser=createFolderBrowser({esc,onOpenFolder:path=>safe(openFolderBrowserPath)(path),onError:message=>status(message,true),onQueryChange:()=>persistPreferences(),onToggleInclude:(path,checked)=>safe(toggleCombinerInclude)(path,checked)});
+ // Chart Combiner (issue #33) state: sources are ticked directly in the
+ // folder-browser tree (a checkbox per song row while this bottom panel is
+ // active) rather than a separate "+Add source" step; combinerSources is
+ // keyed by that same tree path so (un)ticking there and the lower panel's
+ // own Remove button stay in sync automatically on the next render. Never
+ // touches history/the currently open project - these are only loaded into
+ // memory for the combiner to read.
+ let combinerSources=new Map(),combinerClips=[],combinerBuilding=false,combinerFolderBrowserModeActive=false;
+ let combinerSettings={padding:1,fadeIn:0.5,fadeOut:0.5,silenceTrim:true,silenceTrimSeconds:3,trackFadeIn:1,trackFadeOut:1,includeParts:[...PART_CATEGORIES,'other']};
+ function folderPathToFile(path){
   const [rootPart,...rest]=path.split(':'),index=Number(rootPart),segments=rest.join(':').split('/'),name=segments.at(-1)||'folder';
+  // A packaged single-file leaf (e.g. a .feedpak archive) already names its
+  // own real file; anything else is a loose song folder, zipped server-side
+  // and given a synthetic name the /load dispatcher recognizes as such.
+  const isPackagedFile=/\.(feedpak|sloppak)$/i.test(name);
+  return {index,segments,uploadName:isPackagedFile?name:`${name}.oce-folder.zip`};
+ }
+ async function toggleCombinerInclude(path,checked){
+  if(!checked){
+   combinerSources.delete(path);combinerClips=combinerClips.filter(c=>c.sourcePath!==path);renderBottom();return;
+  }
+  combinerSources.set(path,{loading:true});renderBottom();
+  try{
+   const {index,segments,uploadName}=folderPathToFile(path);
+   const response=await fetch('/api/plugins/open_chart_editor/folder-open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({root:index,path:segments})});
+   if(!response.ok)throw Error((await response.json().catch(()=>({})))?.detail||'Could not open this folder');
+   const form=new FormData();form.append('file',new File([await response.blob()],uploadName));
+   const loaded=await fetch(`${API}/load`,{method:'POST',body:form});
+   if(!loaded.ok)throw Error(await loaded.text());
+   const sourceProject=normalizeProject((await loaded.json()).project);
+   combinerSources.set(path,{project:sourceProject,title:[sourceProject.artist,sourceProject.title].filter(Boolean).join(' - ')||'Untitled'});
+  }catch(error){combinerSources.delete(path);status(`Could not add this song to the Chart Combiner: ${error.message}`,true);}
+  renderBottom();renderFolderBrowser();
+ }
+ async function openFolderBrowserPath(path){
+  const {index,segments,uploadName}=folderPathToFile(path);
+  const request=++openGeneration,owner=history,generation=projectGeneration;
   const response=await fetch('/api/plugins/open_chart_editor/folder-open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({root:index,path:segments})});
   if(request!==openGeneration||history!==owner||projectGeneration!==generation||abort.signal.aborted)return;
   if(!response.ok)throw Error((await response.json().catch(()=>({})))?.detail||'Could not open this folder');
-  const file=new File([await response.blob()],`${name}.oce-folder.zip`,{type:'application/zip'});
+  const file=new File([await response.blob()],uploadName);
   await openFile(file,null,{request});
  }
  function renderFolderBrowser(){if(folderBrowserVisible)folderBrowser.render($('folder-browser-content'));}
@@ -1356,6 +1391,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
   if(!mixerPanel.floating&&mixerPanel.open!==(bottom==='mixer')){mixerPanel.open=bottom==='mixer';persistPreferences();}
   if(bottom!=='stave')delete $('bottom-content').dataset.stave;
   if(bottom!=='live'){delete $('bottom-content').dataset.live;stopLiveViz();}
+  if((bottom==='combiner')!==combinerFolderBrowserModeActive){combinerFolderBrowserModeActive=bottom==='combiner';folderBrowser.setCombinerMode(combinerFolderBrowserModeActive);folderBrowser.setIncluded(path=>combinerSources.has(path));renderFolderBrowser();}
   issueFinder.bind(history);const analysis=issueFinder.get(validationProfile);$('errors-label').textContent=`Errors (${analysis.errors.length}) / Warnings (${analysis.warnings.length})`;
   const el=$('bottom-content');if(bottom==='errors'){
    const page=issueFinder.page({profile:validationProfile,filter:issueFilter,page:issuePage});issuePage=page.page;
@@ -1419,8 +1455,137 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    on(el.querySelector('[data-stave-theme]'),'click',()=>{staveTheme=staveTheme==='dark'?'light':'dark';persistPreferences();renderBottom();draw();});
    wireStave($('stave'));drawStavePanel();if(hadFocus)$('stave').focus();
   }
+  else if(bottom==='combiner'){renderCombinerPanel(el);}
   else {el.innerHTML=mixerHtml(true);startMeters();}
   if(mixerPanel.floating)renderFloatingMixer();
+ }
+ function combinerClipKey(sourcePath,sectionStart,sectionEnd){return `${sourcePath}:${sectionStart}:${sectionEnd}`;}
+ function toggleCombinerAllSong(sourcePath){
+  const entry=combinerSources.get(sourcePath);if(!entry?.project)return;
+  if(combinerClips.some(c=>c.sourcePath===sourcePath&&c.allSong))combinerClips=combinerClips.filter(c=>c.sourcePath!==sourcePath);
+  else{combinerClips=combinerClips.filter(c=>c.sourcePath!==sourcePath);combinerClips.push({sourcePath,label:`${entry.title} - Full song`,start:0,end:entry.project.duration,allSong:true});}
+  renderBottom();
+ }
+ function toggleCombinerSection(sourcePath,sectionIndex){
+  const entry=combinerSources.get(sourcePath);if(!entry?.project)return;
+  const section=sourceSections(entry.project)[sectionIndex];if(!section)return;
+  const key=combinerClipKey(sourcePath,section.start_time,section.end);
+  const existing=combinerClips.findIndex(c=>c.sourcePath===sourcePath&&!c.allSong&&combinerClipKey(c.sourcePath,c.start,c.end)===key);
+  if(existing>=0)combinerClips.splice(existing,1);
+  else{combinerClips=combinerClips.filter(c=>!(c.sourcePath===sourcePath&&c.allSong));combinerClips.push({sourcePath,label:`${entry.title} - ${section.name}`,start:section.start_time,end:section.end,allSong:false});}
+  renderBottom();
+ }
+ // Groups sections sharing a name (e.g. four "riff" markers in one song) so
+ // the picker shows one row per distinct name - a "tick all" box for the
+ // whole group, plus one small checkbox per occurrence (labelled by its
+ // timestamp, not a repeat of the name) for picking just one or two of them.
+ function toggleCombinerSectionGroup(sourcePath,name){
+  const entry=combinerSources.get(sourcePath);if(!entry?.project)return;
+  const sections=sourceSections(entry.project).map((section,index)=>({section,index})).filter(x=>x.section.name===name);
+  const allChecked=sections.every(({section})=>combinerClips.some(c=>c.sourcePath===sourcePath&&!c.allSong&&combinerClipKey(c.sourcePath,c.start,c.end)===combinerClipKey(sourcePath,section.start_time,section.end)));
+  if(allChecked){
+   const keys=new Set(sections.map(({section})=>combinerClipKey(sourcePath,section.start_time,section.end)));
+   combinerClips=combinerClips.filter(c=>!(c.sourcePath===sourcePath&&!c.allSong&&keys.has(combinerClipKey(c.sourcePath,c.start,c.end))));
+  }else{
+   combinerClips=combinerClips.filter(c=>!(c.sourcePath===sourcePath&&c.allSong));
+   for(const {section} of sections){
+    const key=combinerClipKey(sourcePath,section.start_time,section.end);
+    if(!combinerClips.some(c=>c.sourcePath===sourcePath&&combinerClipKey(c.sourcePath,c.start,c.end)===key))combinerClips.push({sourcePath,label:`${entry.title} - ${section.name}`,start:section.start_time,end:section.end,allSong:false});
+   }
+  }
+  renderBottom();
+ }
+ function removeCombinerSource(sourcePath){
+  combinerSources.delete(sourcePath);combinerClips=combinerClips.filter(c=>c.sourcePath!==sourcePath);
+  renderBottom();renderFolderBrowser();
+ }
+ function renderCombinerPanel(el){
+  const s=combinerSettings;
+  const sourceBlocks=[...combinerSources.entries()].map(([sourcePath,entry])=>{
+   if(entry.loading)return `<div class="ws-combiner-source"><h4>Loading…</h4></div>`;
+   const allSongChecked=combinerClips.some(c=>c.sourcePath===sourcePath&&c.allSong);
+   const sections=sourceSections(entry.project).map((section,index)=>({...section,index}));
+   const groups=new Map();for(const section of sections){if(!groups.has(section.name))groups.set(section.name,[]);groups.get(section.name).push(section);}
+   const groupHtml=[...groups.entries()].map(([name,occurrences])=>{
+    const groupChecked=occurrences.every(section=>combinerClips.some(c=>c.sourcePath===sourcePath&&!c.allSong&&combinerClipKey(c.sourcePath,c.start,c.end)===combinerClipKey(sourcePath,section.start_time,section.end)));
+    const occurrenceHtml=occurrences.length>1?`<div class="ws-combiner-occurrences">${occurrences.map(section=>{
+     const checked=combinerClips.some(c=>c.sourcePath===sourcePath&&!c.allSong&&combinerClipKey(c.sourcePath,c.start,c.end)===combinerClipKey(sourcePath,section.start_time,section.end));
+     return `<label title="${esc(section.name)} at ${seconds(section.start_time)}"><input type="checkbox" data-combiner-section="${esc(sourcePath)}:${section.index}" ${checked?'checked':''} ${allSongChecked?'disabled':''}>${seconds(section.start_time)}</label>`;
+    }).join('')}</div>`:'';
+    return `<div class="ws-combiner-section-group"><label><input type="checkbox" data-combiner-section-group="${esc(sourcePath)}:${esc(name)}" ${groupChecked?'checked':''} ${allSongChecked?'disabled':''}>${esc(name)}${occurrences.length>1?` (${occurrences.length})`:''}</label>${occurrenceHtml}</div>`;
+   }).join('');
+   return `<div class="ws-combiner-source"><h4>${esc(entry.title)} <button type="button" data-combiner-remove-source="${esc(sourcePath)}" aria-label="Remove ${esc(entry.title)}">Remove</button></h4>`+
+    `<label><input type="checkbox" data-combiner-all-song="${esc(sourcePath)}" ${allSongChecked?'checked':''}>All song</label>`+
+    (sections.length?groupHtml:'<p class="ws-muted">No sections in this song - only "All song" is available.</p>')+'</div>';
+  }).join('');
+  const clipRows=combinerClips.map((clip,index)=>`<li draggable="true" data-combiner-clip="${index}"><span>${esc(clip.label)}</span><button type="button" data-combiner-remove-clip="${index}" aria-label="Remove ${esc(clip.label)}">✕</button></li>`).join('');
+  const partsHtml=[...PART_CATEGORIES,'other'].map(part=>`<label><input type="checkbox" data-combiner-part="${part}" ${s.includeParts.includes(part)?'checked':''}>${esc(TAG_LABEL[part]||part)}</label>`).join('');
+  el.innerHTML=`<h3>Chart Combiner <button type="button" data-action="combine-build" ${combinerClips.length&&!combinerBuilding?'':'disabled'}>${combinerBuilding?'Building…':'Build combined project'}</button></h3>`+
+   `<p class="ws-muted">Tick songs in the folder browser (left) to add them as sources. Tick "All song" or individual sections per source; every tick becomes one clip in the ordered list below, which you can drag to reorder.</p>`+
+   `<div class="ws-combiner-layout"><div class="ws-combiner-sources">${sourceBlocks||'<p class="ws-muted">No sources ticked yet.</p>'}</div>`+
+   `<div class="ws-combiner-clips"><h4>Clip order</h4><ul class="ws-combiner-clip-list">${clipRows||'<li class="ws-muted">No clips selected yet.</li>'}</ul>`+
+   `<div class="ws-combiner-settings">`+
+   `<label>Include parts</label><div class="ws-combiner-parts">${partsHtml}</div>`+
+   `<label>Padding between clips (s)<input type="number" min="0" step="0.1" value="${s.padding}" data-combiner-setting="padding"></label>`+
+   `<label>Fade out / in at each join (s)<input type="number" min="0" step="0.1" value="${s.fadeIn}" data-combiner-setting="fadeIn"><input type="number" min="0" step="0.1" value="${s.fadeOut}" data-combiner-setting="fadeOut"></label>`+
+   `<label><input type="checkbox" data-combiner-setting="silenceTrim" ${s.silenceTrim?'checked':''}>Trim leading silence to<input type="number" min="0" step="0.5" value="${s.silenceTrimSeconds}" data-combiner-setting="silenceTrimSeconds" ${s.silenceTrim?'':'disabled'}> s</label>`+
+   `<label>Fade in (start) / out (end) of whole track (s)<input type="number" min="0" step="0.1" value="${s.trackFadeIn}" data-combiner-setting="trackFadeIn"><input type="number" min="0" step="0.1" value="${s.trackFadeOut}" data-combiner-setting="trackFadeOut"></label>`+
+   `</div></div></div>`;
+  el.querySelectorAll('[data-combiner-all-song]').forEach(input=>on(input,'change',()=>toggleCombinerAllSong(input.dataset.combinerAllSong)));
+  el.querySelectorAll('[data-combiner-section]').forEach(input=>on(input,'change',()=>{const i=input.dataset.combinerSection.lastIndexOf(':'),sourcePath=input.dataset.combinerSection.slice(0,i),sectionIndex=Number(input.dataset.combinerSection.slice(i+1));toggleCombinerSection(sourcePath,sectionIndex);}));
+  el.querySelectorAll('[data-combiner-section-group]').forEach(input=>on(input,'change',()=>{const i=input.dataset.combinerSectionGroup.lastIndexOf(':'),sourcePath=input.dataset.combinerSectionGroup.slice(0,i),name=input.dataset.combinerSectionGroup.slice(i+1);toggleCombinerSectionGroup(sourcePath,name);}));
+  el.querySelectorAll('[data-combiner-remove-source]').forEach(button=>on(button,'click',()=>removeCombinerSource(button.dataset.combinerRemoveSource)));
+  el.querySelectorAll('[data-combiner-remove-clip]').forEach(button=>on(button,'click',()=>{combinerClips.splice(Number(button.dataset.combinerRemoveClip),1);renderBottom();}));
+  el.querySelectorAll('[data-combiner-part]').forEach(input=>on(input,'change',()=>{
+   const part=input.dataset.combinerPart,set=new Set(combinerSettings.includeParts);
+   if(input.checked)set.add(part);else set.delete(part);
+   combinerSettings={...combinerSettings,includeParts:[...set]};renderBottom();
+  }));
+  el.querySelectorAll('[data-combiner-setting]').forEach(input=>on(input,'change',()=>{
+   const key=input.dataset.combinerSetting,value=input.type==='checkbox'?input.checked:Number(input.value);
+   combinerSettings={...combinerSettings,[key]:value};renderBottom();
+  }));
+  let dragIndex=null;
+  el.querySelectorAll('[data-combiner-clip]').forEach(li=>{
+   on(li,'dragstart',e=>{dragIndex=Number(li.dataset.combinerClip);e.dataTransfer.effectAllowed='move';});
+   on(li,'dragover',e=>{if(dragIndex!==null)e.preventDefault();});
+   on(li,'drop',e=>{e.preventDefault();const target=Number(li.dataset.combinerClip);if(dragIndex===null||dragIndex===target)return;const moved=combinerClips.splice(dragIndex,1)[0];combinerClips.splice(target,0,moved);dragIndex=null;renderBottom();});
+  });
+  on(el.querySelector('[data-action="combine-build"]'),'click',safe(buildCombinerProject));
+ }
+ async function buildCombinerProject(){
+  if(!combinerClips.length)throw Error('Select at least one clip before building');
+  if(!combinerSettings.includeParts.length)throw Error('Include at least one part before building');
+  combinerBuilding=true;renderBottom();
+  try{
+   await audio.init(false);
+   status('Decoding source audio…');
+   const decodedAudio=new Map();
+   const byPath=new Map();
+   for(const clip of combinerClips){
+    const entry=combinerSources.get(clip.sourcePath);
+    if(!byPath.has(clip.sourcePath)){
+     const assetUrl=entry.project.audio?.url;
+     let buffer=null;
+     if(assetUrl){const bytes=await(await fetch(assetUrl)).arrayBuffer();buffer=await audio.context.decodeAudioData(bytes);}
+     byPath.set(clip.sourcePath,buffer);
+    }
+    decodedAudio.set(clip,byPath.get(clip.sourcePath));
+   }
+   status('Assembling combined project…');
+   const plan=combinerClips.map(clip=>({sourceProject:combinerSources.get(clip.sourcePath).project,label:clip.label,start:clip.start,end:clip.end}));
+   const planByClip=new Map(combinerClips.map((clip,i)=>[plan[i],decodedAudio.get(clip)]));
+   const result=buildCombinedProject(plan,{...combinerSettings,silenceTrimSeconds:combinerSettings.silenceTrim?combinerSettings.silenceTrimSeconds:null,decodedAudio:planByClip,ctx:audio.context});
+   if(!await confirmReplace())return;
+   switchProject(result.project);
+   combinerSources=new Map();combinerClips=[];bottom='errors';renderBottom();
+   if(result.audio){
+    status('Encoding combined audio…');
+    const wav=encodeWav(result.audio);
+    await uploadAudio(new File([wav],'combined.wav',{type:'audio/wav'}));
+   }
+   status(`Combined project built from ${plan.length} clip${plan.length===1?'':'s'}${result.warnings.length?` / ${result.warnings.length} warnings`:''}`);
+  }finally{combinerBuilding=false;}
  }
  function mixerHtml(docked){
    const channels=Object.keys(audio.gains).map(bus=>{
@@ -2046,6 +2211,7 @@ let history=new History(demoProject()),arrangementId=history.project.arrangement
    on($('dialog-content'),'change',e=>{const field=e.target.dataset.field;const nodeId=e.target.closest('[data-node]')?.dataset.node;if(field&&nodeId){draft=updateFilterNode(draft,nodeId,{[field]:e.target.value});refresh();}});
    if(await pending){folderBrowser.setFilter(draft);persistPreferences();renderFolderBrowser();}
   },
+  'combine-chart':()=>{bottom='combiner';if(!folderBrowserVisible){folderBrowserVisible=true;applyLayout();folderBrowser.loadRoots().then(renderFolderBrowser);}revealBottom();renderBottom();status('Chart Combiner: tick songs in the folder browser (left) to add them as sources.');},
   'split-view':async()=>{
    const parts=project().arrangements.filter(a=>!a.readOnly);if(parts.length<2)throw Error('Add a second arrangement to show arrangements together');
    const chosen=new Set(splitActive()?splitBandIds():[arrangementId]);

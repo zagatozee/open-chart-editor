@@ -100,7 +100,32 @@ def psarc_fixture(directory,pcm=False,multiple=False):
     return source,{'sourceSha256':hashlib.sha256(source).hexdigest(),'arrangements':rows,'audio':audio,'entries':entries,'art':[],'platform':'PC','warnings':['Compiled chart reconstruction; source details unavailable.']}
 
 
+def _duplicate_manifest_arrangement(feedpak_bytes, mutate=lambda entry: entry):
+    """Rewrites a saved feedpak's manifest.yaml so its one arrangement entry
+    is listed twice - optionally mutated on the second copy - to reproduce a
+    corrupted manifest found in the wild (two verbatim-identical rows under
+    one id) without needing a real such file as a fixture."""
+    with zipfile.ZipFile(io.BytesIO(feedpak_bytes)) as z:
+        entries = {name: z.read(name) for name in z.namelist()}
+    manifest = yaml.safe_load(entries['manifest.yaml'])
+    original = manifest['arrangements'][0]
+    manifest['arrangements'] = [original, mutate(dict(original))]
+    entries['manifest.yaml'] = yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False).encode('utf-8')
+    return archive(entries)
+
+
 class PackIOTests(unittest.TestCase):
+    def test_a_manifest_with_a_verbatim_duplicate_arrangement_entry_loads_with_a_warning(self):
+        corrupted = _duplicate_manifest_arrangement(p.save_feedpak(project()))
+        loaded = p.load_feedpak(corrupted)
+        self.assertEqual([a['id'] for a in loaded['arrangements']], ['lead'])
+        self.assertTrue(any('duplicate arrangement entry' in w for w in loaded.get('import_warnings', [])))
+
+    def test_a_manifest_with_two_different_rows_sharing_one_id_still_fails(self):
+        corrupted = _duplicate_manifest_arrangement(p.save_feedpak(project()), mutate=lambda entry: {**entry, 'name': 'Different Name'})
+        with self.assertRaisesRegex(p.ProjectError, 'duplicate id values are ambiguous'):
+            p.load_feedpak(corrupted)
+
     def test_charter_name_and_link_round_trip_through_a_feedpak_authors_entry(self):
         song=project();song['charterName']='Jane Charter';song['charterUrl']='https://ko-fi.com/jane'
         with zipfile.ZipFile(io.BytesIO(p.save_feedpak(song))) as z:

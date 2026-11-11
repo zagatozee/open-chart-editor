@@ -153,3 +153,21 @@ test('filterGroupHtml renders selected op/value and nested groups without throwi
  assert.match(html,/ws-filter-group/);
  assert.match(html,/ws-filter-row/);
 });
+
+test('Chart Combiner mode (issue #33): a song row gets an inclusion checkbox instead of an open-on-click, reflecting the caller\'s own included set',async()=>{
+ const tree={kind:'group',name:'root',children:[{kind:'song',name:'Some Song',format:'rplus',tags:{lead:true,rhythm:false,bass:false,vocals:false,piano:false,drums:false,humstrum:false,other:false,audio:true}}]};
+ const fetcher=async(url)=>url.includes('folder-tree')?{ok:true,json:async()=>tree}:{ok:true,json:async()=>({roots:['/library']})};
+ const browser=createFolderBrowser({fetcher});
+ await browser.loadRoots();
+ const container=fakeContainer();
+ browser.render(container); // triggers the lazy folder-tree fetch
+ await new Promise(resolve=>setTimeout(resolve,0));
+ browser.render(container);
+ assert.match(container.innerHTML,/data-open="0:Some Song"/);
+ assert.doesNotMatch(container.innerHTML,/data-include/);
+ browser.setCombinerMode(true);
+ browser.setIncluded(path=>path==='0:Some Song');
+ browser.render(container);
+ assert.doesNotMatch(container.innerHTML,/data-open=/);
+ assert.match(container.innerHTML,/data-include="0:Some Song"[^>]*checked/);
+});

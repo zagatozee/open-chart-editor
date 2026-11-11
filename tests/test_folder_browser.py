@@ -1,11 +1,13 @@
 """Working-folder browser (issue #31): configured-roots persistence and
 per-song-folder tag sniffing, against real small folders on disk for each
 supported format. All fixtures are synthetic/original, never real chart data."""
+import io
 import json
 import struct
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -259,6 +261,65 @@ class GpaTagTests(unittest.TestCase):
             node = fb.list_tree(directory)
             self.assertEqual(node['format'], 'gpa')
             self.assertIsNone(node['tags'])
+
+
+def _feedpak_archive_bytes(manifest):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w') as archive:
+        archive.writestr('manifest.yaml', manifest)
+    return output.getvalue()
+
+
+class FeedpakArchiveTests(unittest.TestCase):
+    def test_a_loose_packaged_feedpak_file_is_its_own_song_leaf(self):
+        # A library of individually-saved .feedpak files sitting directly in
+        # a folder (not one folder per song) - the OCE-native save format,
+        # so this is a common real-world shape, not an edge case.
+        manifest = '''
+title: Test Song
+artist: Test Artist
+duration: 180
+stems:
+  - path: audio/full.wav
+arrangements:
+  - id: lead
+    name: Lead
+    type: guitar
+  - id: bass
+    name: Bass
+    type: bass
+lyrics: lyrics.json
+'''
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            _write(directory, 'Some Song.feedpak', _feedpak_archive_bytes(manifest))
+            node = fb.list_tree(directory)
+            self.assertEqual(node['kind'], 'group')
+            leaf = node['children'][0]
+            self.assertEqual(leaf['kind'], 'song')
+            self.assertEqual(leaf['name'], 'Some Song')
+            self.assertEqual(leaf['format'], 'feedpak')
+            self.assertEqual(leaf['file'], 'Some Song.feedpak')
+            self.assertTrue(leaf['tags']['lead'])
+            self.assertTrue(leaf['tags']['bass'])
+            self.assertTrue(leaf['tags']['vocals'])
+
+    def test_resolving_and_opening_a_packaged_file_leaf(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            data = _feedpak_archive_bytes('title: Test\nartist: A\nduration: 1\nstems: []\narrangements: []\n')
+            _write(directory, 'Some Song.feedpak', data)
+            resolved = fb.resolve_song_folder(root, ['Some Song.feedpak'])
+            self.assertTrue(resolved.is_file())
+            self.assertEqual(resolved.read_bytes(), data)
+
+    def test_an_unreadable_archive_is_skipped_not_fatal(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            _write(directory, 'Broken.feedpak', b'not a real zip')
+            node = fb.list_tree(directory)
+            self.assertEqual(node['kind'], 'group')
+            self.assertEqual(node['children'], [])
 
 
 if __name__ == '__main__':

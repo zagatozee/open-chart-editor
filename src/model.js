@@ -158,10 +158,22 @@ export function setStringCount(a,count){
   // open pitches. Bass six adds a high C; guitar seven/eight add lower strings.
   const standard=pitches(a.type,a.stringCount),next=pitches(a.type,count),old=a.basePitches||standard,tuning=a.tuning||standard.map(()=>0);
   if(old.length!==a.stringCount||tuning.length!==a.stringCount||old.some(p=>!Number.isInteger(p))||tuning.some(p=>!Number.isInteger(p)))throw Error('Resolve invalid base pitches or tuning before changing string count');
-  const mapping=standard.map(p=>next.indexOf(p)),contents=[a,...a.difficulties||[]],notes=[...new Set(contents.flatMap(c=>[...c.notes||[],...(c.chords||[]).flatMap(ch=>ch.notes||[])]))];
+  let mapping=standard.map(p=>next.indexOf(p));const contents=[a,...a.difficulties||[]],notes=[...new Set(contents.flatMap(c=>[...c.notes||[],...(c.chords||[]).flatMap(ch=>ch.notes||[])]))];
   if(notes.some(n=>!Number.isInteger(n.string)||n.string<0||n.string>=a.stringCount))throw Error('Resolve invalid note strings before changing string count');
+  const loses=m=>notes.some(n=>m[n.string]<0)||(a.chord_templates||[]).some(c=>c.frets.some((f,i)=>f>=0&&m[i]<0));
+  if(loses(mapping)&&JSON.stringify(old)!==JSON.stringify(standard)){
+    // This arrangement's own basePitches don't follow the standard layout its
+    // type/string-count would normally have (seen in the wild: a "bass"
+    // arrangement whose basePitches are actually a 6-string guitar's, from a
+    // third-party PSARC->FeedPak conversion) - the pitch-matching mapping
+    // above is meaningless for data shaped like this. Fall back to a plain
+    // positional mapping (string i keeps its own index; only the extra high
+    // strings are dropped) when that wouldn't lose anything either.
+    const positional=Array.from({length:a.stringCount},(_,i)=>i<count?i:-1);
+    if(!loses(positional))mapping=positional;
+  }
   const templates=(a.chord_templates||[]).map(template=>{if(!Array.isArray(template.frets)||template.frets.length!==a.stringCount)throw Error('Resolve invalid chord shapes before changing string count');const updates={};for(const key of ['frets','fingers'])if(Array.isArray(template[key]))updates[key]=next.map((_,i)=>template[key][mapping.indexOf(i)]??-1);return{template,updates};});
-  if(notes.some(n=>mapping[n.string]<0)||(a.chord_templates||[]).some(c=>c.frets.some((f,i)=>f>=0&&mapping[i]<0)))throw Error('Removing a string would lose authored notes or a chord voicing');
+  if(loses(mapping))throw Error('Removing a string would lose authored notes or a chord voicing');
   const baseOffset=old[0]-standard[0],bases=next.map((p,i)=>{const source=mapping.indexOf(i);return source<0?p+baseOffset:old[source];}),offsets=next.map((_,i)=>tuning[mapping.indexOf(i)]??0);
   for(const n of notes)n.string=mapping[n.string];for(const {template,updates}of templates)Object.assign(template,updates);
   a.tuning=offsets;a.basePitches=bases;a.stringCount=count;

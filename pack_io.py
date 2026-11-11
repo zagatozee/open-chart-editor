@@ -80,7 +80,7 @@ except ImportError:
             sys.modules.pop(_midi_name,None)
             raise
 
-MAX_BYTES = 256 * 1024 * 1024
+MAX_BYTES = 8 * 1024 * 1024 * 1024
 MAX_MEMBERS = 4096
 MAX_COVER = 8 * 1024 * 1024
 MAX_RIG_LIBRARY = 8 * 1024 * 1024
@@ -477,6 +477,36 @@ def validate_feedpak_entries(manifest, entries):
         return _feedpak_contract.validate(manifest, entries, _decode_json, _path, _check_manifest_tree)
     except _feedpak_contract.ContractError as exc:
         raise ProjectError(str(exc)) from exc
+
+
+def _dedupe_manifest_duplicate_ids(manifest):
+    """Load-only safety net: some tool producing a FeedPak can leave its
+    manifest listing the exact same arrangement/stem/lyric-track row twice
+    under one id (seen in the wild: an unmodified entry duplicated verbatim).
+    Refusing to open the whole project over a harmless identical duplicate is
+    unhelpful, so the first copy is kept and the rest silently dropped with a
+    warning - but only when the rows are truly identical. A real collision
+    between two DIFFERENT rows sharing an id is left untouched here; that is
+    still a genuine ambiguity and feedpak_contract.validate must still reject
+    it. This never runs on save - an exported manifest must stay exact."""
+    warnings = []
+    for field, label in (('arrangements', 'arrangement'), ('stems', 'stem'), ('lyric_tracks', 'lyric track')):
+        rows = manifest.get(field)
+        if not isinstance(rows, list):
+            continue
+        kept, seen = [], {}
+        for row in rows:
+            row_id = row.get('id') if isinstance(row, dict) else None
+            if row_id is None or row_id not in seen:
+                if row_id is not None:
+                    seen[row_id] = row
+                kept.append(row)
+            elif row == seen[row_id]:
+                warnings.append(f'A duplicate {label} entry ("{row_id}") in this FeedPak\'s manifest was identical to one already read and was ignored.')
+            else:
+                kept.append(row)  # genuine id collision between different rows: let validate() reject this
+        manifest[field] = kept
+    return warnings
 
 
 def _check_manifest_tree(value):
@@ -1459,10 +1489,12 @@ def load_feedpak(data):
     _check_manifest_tree(manifest)
     if not isinstance(manifest, dict):
         raise ProjectError('Feedpak manifest must be a mapping')
+    dedupe_warnings = _dedupe_manifest_duplicate_ids(manifest)
     contract = validate_feedpak_entries(manifest, entries)
     def read(name):
         return _decode_json(entries[_path(name)],name)
     project = {'version': 1, **{k: copy.deepcopy(manifest.get(k, default)) for k,default in [('title','Untitled'),('artist',''),('duration',0)]}, 'arrangements': [], 'beats': [], 'sections': []}
+    if dedupe_warnings:project.setdefault('import_warnings',[]).extend(dedupe_warnings)
     # Year and album are optional in the manifest; a pack without them stays without them.
     for key in ('album','year'):
         if key in manifest:project[key]=copy.deepcopy(manifest[key])
