@@ -150,6 +150,27 @@ class RouteTests(unittest.TestCase):
         finally:fresh.state.open_chart_editor_scratch.cleanup()
 
 
+    def test_combiner_audio_falls_back_to_original_when_undecodable(self):
+        garbage=b'RIFF\x00\x00\x00\x00WAVEfmt not real audio'
+        response=self.client.post(self.prefix+'/combiner-audio',files={'file':('combined.wav',garbage,'audio/wav')})
+        self.assertEqual(response.status_code,200,response.text)
+        asset=response.json()
+        self.assertEqual(self.client.get(asset['url']).content,garbage)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'),'FFmpeg unavailable')
+    def test_combiner_audio_compresses_real_pcm_to_ogg(self):
+        buffer=io.BytesIO()
+        with wave.open(buffer,'wb') as writer:
+            writer.setparams((1,2,22050,0,'NONE','not compressed'))
+            writer.writeframes(b'\x34\x12'*22050)
+        wav_bytes=buffer.getvalue()
+        response=self.client.post(self.prefix+'/combiner-audio',files={'file':('combined.wav',wav_bytes,'audio/wav')})
+        self.assertEqual(response.status_code,200,response.text)
+        asset=response.json()
+        self.assertTrue(asset['name'].endswith('.ogg'),asset['name'])
+        compressed=self.client.get(asset['url']).content
+        self.assertLess(len(compressed),len(wav_bytes))
+
     @unittest.skipUnless(shutil.which('ffmpeg'),'FFmpeg unavailable')
     def test_explicit_pcm_preview_keeps_original_export_source_and_rejects_bad_audio(self):
         buffer=io.BytesIO()

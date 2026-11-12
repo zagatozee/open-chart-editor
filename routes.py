@@ -635,6 +635,39 @@ def setup(app, context=None):
         if tags:result['tags']=tags
         return result
 
+    def compress_combined_audio(data, name):
+        """The Combiner assembles raw PCM client-side; an album-length combine is
+        hundreds of MB of WAV, which a downstream Feedpak stem reader may cap
+        (e.g. FeedBack's own per-stem decompression limit). Encode to OGG here,
+        same ffmpeg settings ensure_baseline_stem already uses for a full mix, so
+        the editor, Playtest and export all see the compact file from the start."""
+        executable = shutil.which('ffmpeg')
+        if not executable:
+            return data, name
+        with tempfile.TemporaryDirectory(prefix='combiner-audio-', dir=cache) as directory:
+            source = Path(directory)/('source'+Path(name).suffix.lower())
+            source.write_bytes(data)
+            target = Path(directory)/'combined.ogg'
+            run = subprocess.run([executable,'-nostdin','-hide_banner','-loglevel','error','-n','-i',str(source),
+                                  '-vn','-c:a','libvorbis','-q:a','6',str(target)],
+                                  stdin=subprocess.DEVNULL,capture_output=True,timeout=600,
+                                  creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            if run.returncode==0 and target.is_file() and target.stat().st_size>0:
+                return target.read_bytes(), 'combined.ogg'
+        return data, name
+
+    @app.post(PREFIX+'/combiner-audio')
+    async def combiner_audio(file: UploadFile = File(...)):
+        data = await bounded_upload(file, MAX_AUDIO)
+        try:
+            data, name = await asyncio.to_thread(compress_combined_audio, data, file.filename or 'combined.wav')
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504,'Combined audio compression exceeded 10 minutes; use the uncompressed build instead')
+        result=store_audio(data, name)
+        tags=await asyncio.to_thread(audio_tags,assets[result['token']]['path'])
+        if tags:result['tags']=tags
+        return result
+
     # ── Stem splitting ──────────────────────────────────────────────────────
     # OCE ships no separation engine of its own. This POSTs the project's audio
     # to a separation-server URL the user supplies (see stem_split.py) and

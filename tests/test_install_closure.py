@@ -36,5 +36,11 @@ class InstallClosureTests(unittest.TestCase):
         installer.validate_module_closure(ROOT,installer.RUNTIME_FILES+installer.OPTIONAL_FILES)
         self.assertFalse(any('candidate' in path or path.startswith('research/') for path in installer.RUNTIME_FILES))
 
+    def test_every_bundled_feedpak_schema_is_in_the_runtime_allowlist(self):
+        schema_dir=ROOT/'assets'/'feedpak-schemas'
+        on_disk={f'assets/feedpak-schemas/{path.name}' for path in schema_dir.glob('*.schema.json')}
+        missing=on_disk-set(installer.RUNTIME_FILES)
+        self.assertFalse(missing,f'Schema files missing from RUNTIME_FILES (a real install silently loses feedpak_contract validation without these): {missing}')
+
 if __name__=='__main__':
     unittest.main()
